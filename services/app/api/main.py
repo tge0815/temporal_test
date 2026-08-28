@@ -28,7 +28,7 @@ log = logging.getLogger("dashboard-api")
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
-zustand: dict = {"producer": None, "temporal": None}
+zustand: dict = {"producer": None, "temporal": None, "db": False}
 
 
 async def kafka_producer() -> AIOKafkaProducer:
@@ -49,16 +49,34 @@ async def kafka_producer() -> AIOKafkaProducer:
     raise RuntimeError("Kafka nicht erreichbar")
 
 
+async def _verbindungen_aufbauen() -> None:
+    """Baut die Verbindungen im Hintergrund auf.
+
+    Bewusst NICHT im Startup-Hook blockierend: uvicorn nimmt sonst so lange
+    keine HTTP-Anfragen an, und das Dashboard waere waehrend des Hochfahrens
+    von Kafka und Temporal im Browser gar nicht erreichbar. So laedt die
+    Seite sofort und zeigt oben rechts an, worauf noch gewartet wird.
+    """
+    try:
+        await db.pool()
+        zustand["db"] = True
+    except Exception:  # noqa: BLE001
+        log.exception("PostgreSQL nicht erreichbar")
+    try:
+        zustand["producer"] = await kafka_producer()
+    except Exception:  # noqa: BLE001
+        log.exception("Kafka nicht erreichbar - Unfallmeldung nicht moeglich")
+    try:
+        zustand["temporal"] = await verbinde(versuche=90)
+    except Exception:  # noqa: BLE001
+        log.warning("Temporal nicht erreichbar - Workflow-Abfrage inaktiv")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await db.pool()
-    zustand["producer"] = await kafka_producer()
-    # Temporal ist optional fuer die UI (nur fuer die Workflow-Abfrage).
-    try:
-        zustand["temporal"] = await verbinde(versuche=30)
-    except Exception:  # noqa: BLE001
-        log.warning("Temporal (noch) nicht erreichbar - Workflow-Abfrage inaktiv")
+    aufgabe = asyncio.create_task(_verbindungen_aufbauen())
     yield
+    aufgabe.cancel()
     if zustand["producer"]:
         await zustand["producer"].stop()
 
@@ -136,13 +154,20 @@ async def unfall_melden(meldung: UnfallMeldung) -> dict:
     }
 
 
+def _db_bereit() -> None:
+    if not zustand["db"]:
+        raise HTTPException(503, "Datenbank noch nicht bereit")
+
+
 @app.get("/api/faelle")
 async def faelle() -> list[dict]:
+    _db_bereit()
     return await db.faelle_lesen()
 
 
 @app.get("/api/faelle/{fall_id}")
 async def fall(fall_id: str) -> dict:
+    _db_bereit()
     daten = await db.fall_lesen(fall_id)
     if not daten:
         raise HTTPException(404, "Fall nicht gefunden")
@@ -153,6 +178,7 @@ async def fall(fall_id: str) -> dict:
 @app.get("/api/faelle/{fall_id}/workflow")
 async def workflow_zustand(fall_id: str) -> JSONResponse:
     """Fragt den echten Temporal-Workflow nach seinem Zustand (Query)."""
+    _db_bereit()
     daten = await db.fall_lesen(fall_id)
     if not daten:
         raise HTTPException(404, "Fall nicht gefunden")
@@ -185,6 +211,7 @@ async def workflow_zustand(fall_id: str) -> JSONResponse:
 async def health() -> dict:
     return {
         "status": "ok",
+        "datenbank": zustand["db"],
         "kafka": zustand["producer"] is not None,
         "temporal": zustand["temporal"] is not None,
     }

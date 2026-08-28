@@ -105,10 +105,13 @@ async function tick() {
 function zeigeHealth(h) {
   const el = document.getElementById("health");
   if (!h) { el.className = "pill pill-rot"; el.textContent = "API nicht erreichbar"; return; }
-  const ok = h.kafka && h.temporal;
+  // Beim Hochfahren einzeln anzeigen, worauf noch gewartet wird.
+  const teile = [["DB", h.datenbank], ["Kafka", h.kafka], ["Temporal", h.temporal]];
+  const ok = teile.every(([, bereit]) => bereit);
   el.className = "pill " + (ok ? "pill-gruen" : "pill-gelb");
-  el.textContent = ok ? "Kafka ✓  Temporal ✓"
-                      : `Kafka ${h.kafka ? "✓" : "…"}  Temporal ${h.temporal ? "✓" : "…"}`;
+  el.textContent = teile.map(([name, bereit]) => `${name} ${bereit ? "✓" : "…"}`).join("  ");
+  el.title = ok ? "Alle Dienste verbunden"
+                : "… bedeutet: dieser Dienst startet noch oder ist nicht erreichbar";
 }
 
 function zeichneFaelle(faelle) {
