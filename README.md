@@ -20,13 +20,25 @@ laufen lassen und von außen darauf zugreifen wollen, müssen Sie einmal die
 IP-Adresse dieser VM eintragen. Auf der VM ausgeben lassen mit:
 
 ```bash
-hostname -I        # gibt z. B. aus: 192.168.178.42
+hostname -I
 ```
 
-Dann in der Datei `.env` (liegt im Projektordner) die erste Zeile anpassen:
+Das gibt oft **mehrere** Adressen aus, zum Beispiel:
 
 ```
-HOST_IP=192.168.178.42
+192.168.1.46 172.19.0.1 172.21.0.1 172.17.0.1
+```
+
+Nehmen Sie die **erste**. Die Adressen mit `172.` gehören Docker selbst und
+funktionieren von außen nicht. Falls Sie unsicher sind: Es ist die Adresse aus
+demselben Zahlenbereich wie Ihr eigener Rechner (die ersten drei Zahlen stimmen
+überein).
+
+Dann in der Datei `.env` (liegt im Projektordner) die erste Zeile anpassen –
+mit **Ihrer** Adresse, nicht der aus diesem Beispiel:
+
+```
+HOST_IP=192.168.1.46
 ```
 
 Nur diese eine Zeile. Die Ports darunter können so bleiben – sie sind bewusst
@@ -60,7 +72,7 @@ uv-rentenberechnung | rentenberechnung läuft auf Queue 'rentenberechnung-queue'
 ## 2. Welche Seite öffne ich?
 
 Setzen Sie für `<HOST_IP>` die IP ein, die Sie in die `.env` eingetragen haben
-(also z. B. `192.168.178.42`):
+(also z. B. `192.168.1.46`):
 
 | Was | URL |
 | --- | --- |
@@ -235,7 +247,7 @@ läuft echtes Temporal, es war kein Hindernis.
 1. Terminal im Projektordner öffnen, `docker compose up` eingeben, Enter.
 2. Warten, bis die Logzeilen aus Abschnitt 1 erscheinen (erster Start: einige Minuten).
 3. Browser öffnen: **http://\<HOST_IP\>:28080** (also z. B.
-   `http://192.168.178.42:28080`). Oben rechts sollte grün
+   `http://192.168.1.46:28080` – Ihre Adresse aus `hostname -I`). Oben rechts sollte grün
    „Kafka ✓ Temporal ✓" stehen.
 4. Im Formular z. B. eintragen: Name `Max Mustermann`, Geburtsjahr `1985`,
    Beruf `Dachdecker`, Körperteil `Bein`, Schweregrad `schwer`.
@@ -316,7 +328,7 @@ Die zwei fachlich interessantesten Dateien sind mit ► markiert.
 * **Im Dashboard steht der Temporal-Link falsch**: Er wird aus der Adresse
   gebaut, mit der Sie das Dashboard aufgerufen haben. Wenn Sie ihn fest
   vorgeben wollen, setzen Sie in der `.env` zusätzlich
-  `TEMPORAL_UI_URL=http://192.168.178.42:28233`.
+  `TEMPORAL_UI_URL=http://192.168.1.46:28233`.
 * **Oben rechts steht dauerhaft „Kafka … Temporal …"**: Der erste Start braucht
   etwas. Falls es länger als zwei Minuten bleibt: `docker compose logs kafka temporal`.
 * **Ein Fall bleibt hängen**: `docker compose logs orchestrator mde-agent jav-agent`
