@@ -5,3 +5,6 @@ __pycache__/
 
 # Zugangsdaten – niemals ins Git
 geheim.env
+
+# Eigene Einstellungen – bleiben bei git pull unangetastet
+.env

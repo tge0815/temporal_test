@@ -34,14 +34,18 @@ funktionieren von außen nicht. Falls Sie unsicher sind: Es ist die Adresse aus
 demselben Zahlenbereich wie Ihr eigener Rechner (die ersten drei Zahlen stimmen
 überein).
 
-Dann in der Datei `.env` (liegt im Projektordner) die erste Zeile anpassen –
+Dann einmalig Ihre eigene Einstellungsdatei anlegen und die IP eintragen –
 mit **Ihrer** Adresse, nicht der aus diesem Beispiel:
 
-```
-HOST_IP=192.168.1.46
+```bash
+cp .env.beispiel .env
+nano .env                 # HOST_IP=192.168.1.46 eintragen
 ```
 
-Nur diese eine Zeile. Die Ports darunter können so bleiben – sie sind bewusst
+Nur diese eine Zeile.
+
+> Die Datei `.env` liegt bewusst **nicht** im Git. Dadurch bleiben Ihre
+> Einstellungen bei jedem späteren `git pull` unangetastet. Die Ports darunter können so bleiben – sie sind bewusst
 nicht die Standardports, damit sie nicht mit anderen Diensten kollidieren.
 
 > Wenn Sie alles direkt auf Ihrem eigenen Rechner starten, können Sie
@@ -403,7 +407,7 @@ docker compose down -v
 ## 10. Wo steht welcher Code?
 
 ```
-.env                                   IP-Adresse und Ports (hier anpassen)
+.env.beispiel                          Vorlage: IP-Adresse und Ports
 geheim.env.beispiel                    Vorlage für den Claude-API-Schlüssel
 docker-compose.yml                     alle Services, Ports, Startreihenfolge
 config/dynamicconfig/                  Einstellungen für den Temporal-Server
@@ -432,6 +436,16 @@ Die zwei fachlich interessantesten Dateien sind mit ► markiert.
 * **Der Upload wird mit „Dieser Fall wartet gerade nicht auf ein Gutachten"
   abgelehnt**: Der Fall ist über diesen Schritt schon hinaus. Ein Gutachten
   lässt sich nur einreichen, solange der Fall auch darauf wartet.
+* **`git pull` meldet „Ihre lokalen Änderungen … würden überschrieben"**:
+  Das betraf frühere Versionen, in denen `.env` noch mitversioniert war. Einmalig:
+  ```bash
+  cp .env .env.sicherung     # Ihre Werte sichern
+  git checkout -- .env       # Datei auf den Stand aus dem Git zurücksetzen
+  git pull
+  cp .env.beispiel .env      # falls .env dabei verschwunden ist
+  nano .env                  # HOST_IP wieder eintragen
+  ```
+  Ab dieser Version passiert das nicht mehr – `.env` steht in der `.gitignore`.
 * **`Unable to create dynamic config client`** und der Temporal-Container
   startet immer wieder neu: Die Datei `config/dynamicconfig/development-sql.yaml`
   fehlt oder wird nicht hineingemountet. Sie gehört zum Projekt und muss
