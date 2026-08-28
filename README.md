@@ -11,7 +11,31 @@ zum Ausprobieren **nicht** nötig.
 
 ## 1. Starten
 
-Voraussetzung: **Docker Desktop** ist installiert und läuft.
+Voraussetzung: **Docker** ist installiert und läuft.
+
+### Zuerst: die IP Ihrer Docker-VM eintragen
+
+Wenn Sie das Ganze **nicht** auf Ihrem eigenen Rechner, sondern auf einer VM
+laufen lassen und von außen darauf zugreifen wollen, müssen Sie einmal die
+IP-Adresse dieser VM eintragen. Auf der VM ausgeben lassen mit:
+
+```bash
+hostname -I        # gibt z. B. aus: 192.168.178.42
+```
+
+Dann in der Datei `.env` (liegt im Projektordner) die erste Zeile anpassen:
+
+```
+HOST_IP=192.168.178.42
+```
+
+Nur diese eine Zeile. Die Ports darunter können so bleiben – sie sind bewusst
+nicht die Standardports, damit sie nicht mit anderen Diensten kollidieren.
+
+> Wenn Sie alles direkt auf Ihrem eigenen Rechner starten, können Sie
+> `HOST_IP=localhost` stehen lassen.
+
+### Dann starten
 
 Im Ordner dieses Projekts ein Terminal öffnen und eingeben:
 
@@ -35,12 +59,24 @@ uv-rentenberechnung | rentenberechnung läuft auf Queue 'rentenberechnung-queue'
 
 ## 2. Welche Seite öffne ich?
 
+Setzen Sie für `<HOST_IP>` die IP ein, die Sie in die `.env` eingetragen haben
+(also z. B. `192.168.178.42`):
+
 | Was | URL |
 | --- | --- |
-| **Dashboard – hier klicken Sie** | **http://localhost:8080** |
-| Temporal-Oberfläche (der Blick „unter die Motorhaube") | http://localhost:8233 |
+| **Dashboard – hier klicken Sie** | **http://\<HOST_IP\>:28080** |
+| Temporal-Oberfläche (der Blick „unter die Motorhaube") | http://\<HOST_IP\>:28233 |
 
-Alles Weitere passiert auf **http://localhost:8080**.
+Alles Weitere passiert auf **http://\<HOST_IP\>:28080**.
+
+Der Link zur Temporal-Oberfläche oben rechts im Dashboard richtet sich
+automatisch nach der Adresse, mit der Sie das Dashboard aufgerufen haben –
+Sie müssen dafür nichts einstellen.
+
+> **Kommen Sie nicht durch?** Auf der VM prüfen, ob die Ports offen sind:
+> `sudo ufw allow 28080/tcp` und `sudo ufw allow 28233/tcp` (bei aktiver
+> Firewall). Bei VirtualBox/VMware zusätzlich die Portweiterleitung bzw. den
+> Netzwerkmodus „Bridged" prüfen.
 
 ## 3. Was klicke ich an?
 
@@ -86,7 +122,7 @@ Es geht in dieser Demo um den **Ablauf**, nicht um fachliche Korrektheit.
 ## 5. Die Architektur
 
 ```
-       Browser  ──  Dashboard  http://localhost:8080
+       Browser  ──  Dashboard  http://<HOST_IP>:28080
           │
           │ (1) Formular abschicken
           ▼
@@ -117,18 +153,24 @@ Es geht in dieser Demo um den **Ablauf**, nicht um fachliche Korrektheit.
 
 ### Services und Ports
 
-| Service | Port (auf Ihrem Rechner) | Aufgabe |
-|---|---|---|
-| `dashboard-api` | **8080** | Weboberfläche, REST-API, **Kafka-Producer** |
-| `kafka` | 9092 | Message Broker (Apache Kafka im **KRaft**-Modus, ohne Zookeeper) |
-| `temporal` | 7233 | Orchestrator-Engine (echter Temporal-Server) |
-| `temporal-ui` | **8233** | Weboberfläche von Temporal |
-| `postgres` | 5432 | Fälle und Verlauf (und die Temporal-Datenbank) |
-| `event-consumer` | – | liest Kafka-Events, speichert, startet den Workflow |
-| `orchestrator` | – | hält die Workflow-Definition (Reihenfolge der Schritte) |
-| `mde-agent` | – | Temporal-Worker auf eigener Queue `mde-agent-queue` |
-| `jav-agent` | – | Temporal-Worker auf eigener Queue `jav-agent-queue` |
-| `rentenberechnung` | – | Temporal-Worker auf eigener Queue `rentenberechnung-queue` |
+Alle Ports stehen in der `.env` und lassen sich dort ändern.
+
+| Service | Port auf der VM | in `.env` | Aufgabe |
+|---|---|---|---|
+| `dashboard-api` | **28080** | `DASHBOARD_PORT` | Weboberfläche, REST-API, **Kafka-Producer** |
+| `kafka` | 29092 | `KAFKA_PORT` | Message Broker (Apache Kafka im **KRaft**-Modus, ohne Zookeeper) |
+| `temporal` | 27233 | `TEMPORAL_PORT` | Orchestrator-Engine (echter Temporal-Server) |
+| `temporal-ui` | **28233** | `TEMPORAL_UI_PORT` | Weboberfläche von Temporal |
+| `postgres` | 25432 | `POSTGRES_PORT` | Fälle und Verlauf (und die Temporal-Datenbank) |
+| `event-consumer` | – | – | liest Kafka-Events, speichert, startet den Workflow |
+| `orchestrator` | – | – | hält die Workflow-Definition (Reihenfolge der Schritte) |
+| `mde-agent` | – | – | Temporal-Worker auf eigener Queue `mde-agent-queue` |
+| `jav-agent` | – | – | Temporal-Worker auf eigener Queue `jav-agent-queue` |
+| `rentenberechnung` | – | – | Temporal-Worker auf eigener Queue `rentenberechnung-queue` |
+
+Untereinander reden die Container über das interne Compose-Netz (`kafka:9092`,
+`temporal:7233`, `postgres:5432`). Die Ports oben sind nur dafür da, dass **Sie**
+von außen darauf zugreifen können.
 
 Jeder Agent ist ein **eigener Container mit eigener Task-Queue**. Der Orchestrator
 kennt nur die Namen der Schritte, nicht deren Code – man könnte `mde-agent` austauschen,
@@ -152,7 +194,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 --topic unfall.gemeldet --from-beginning
 ```
 
-**Temporal:** Öffnen Sie http://localhost:8233. Dort sehen Sie zu jedem Fall einen
+**Temporal:** Öffnen Sie http://\<HOST_IP\>:28233. Dort sehen Sie zu jedem Fall einen
 Workflow `UnfallSachbearbeitung` mit der ID `unfall-UV-2026-…`, die Event-History
 und jede einzelne Activity mit Dauer. Im Dashboard zeigt die Detailansicht unter
 „Temporal-Workflow" den Zustand, der per **Temporal-Query** live aus dem laufenden
@@ -192,7 +234,8 @@ läuft echtes Temporal, es war kein Hindernis.
 
 1. Terminal im Projektordner öffnen, `docker compose up` eingeben, Enter.
 2. Warten, bis die Logzeilen aus Abschnitt 1 erscheinen (erster Start: einige Minuten).
-3. Browser öffnen: **http://localhost:8080**. Oben rechts sollte grün
+3. Browser öffnen: **http://\<HOST_IP\>:28080** (also z. B.
+   `http://192.168.178.42:28080`). Oben rechts sollte grün
    „Kafka ✓ Temporal ✓" stehen.
 4. Im Formular z. B. eintragen: Name `Max Mustermann`, Geburtsjahr `1985`,
    Beruf `Dachdecker`, Körperteil `Bein`, Schweregrad `schwer`.
@@ -208,7 +251,7 @@ läuft echtes Temporal, es war kein Hindernis.
    * **Temporal-Workflow** – Workflow-ID, Status `COMPLETED`, erledigte Schritte 3/3.
    * **Verarbeitungsverlauf** – jeder Schritt mit Uhrzeit, ausführender Komponente,
      Konfidenzbalken und Begründung. „Rohdaten anzeigen" öffnet die Details.
-10. Zur Gegenprobe http://localhost:8233 öffnen → Workflow `unfall-UV-…` anklicken →
+10. Zur Gegenprobe http://\<HOST_IP\>:28233 öffnen → Workflow `unfall-UV-…` anklicken →
     dort sieht man dieselben Schritte als echte Temporal-Event-History.
 11. Gerne noch 2–3 weitere Fälle melden: gleiche Eingaben ergeben leicht
     unterschiedliche MdE/JAV-Werte (die Agenten streuen), die **Rentenformel** rechnet
@@ -227,6 +270,7 @@ docker compose down -v
 ## 10. Wo steht welcher Code?
 
 ```
+.env                                   IP-Adresse und Ports (hier anpassen)
 docker-compose.yml                     alle Services, Ports, Startreihenfolge
 services/app/
   api/main.py                          Dashboard-API + Kafka-Producer
@@ -244,8 +288,18 @@ Die zwei fachlich interessantesten Dateien sind mit ► markiert.
 
 ## 11. Wenn etwas klemmt
 
-* **Port belegt** (`address already in use`): In `docker-compose.yml` die linke Zahl
-  im `ports:`-Eintrag ändern, z. B. `"8081:8080"`, und `http://localhost:8081` öffnen.
+* **Port belegt** (`address already in use`): In der Datei `.env` den betroffenen
+  Port auf eine freie Zahl ändern (z. B. `DASHBOARD_PORT=28081`), dann
+  `docker compose up -d` erneut ausführen.
+* **Seite lädt nicht von einem anderen Rechner aus**: Die Dienste hören auf allen
+  Netzwerkschnittstellen (`0.0.0.0`), es liegt also fast immer an der Firewall
+  der VM oder am Netzwerkmodus der VM. Prüfen mit
+  `curl http://localhost:28080/api/health` **auf der VM selbst** – kommt dort
+  `{"status":"ok",…}`, läuft alles und es fehlt nur der Weg von außen.
+* **Im Dashboard steht der Temporal-Link falsch**: Er wird aus der Adresse
+  gebaut, mit der Sie das Dashboard aufgerufen haben. Wenn Sie ihn fest
+  vorgeben wollen, setzen Sie in der `.env` zusätzlich
+  `TEMPORAL_UI_URL=http://192.168.178.42:28233`.
 * **Oben rechts steht dauerhaft „Kafka … Temporal …"**: Der erste Start braucht
   etwas. Falls es länger als zwei Minuten bleibt: `docker compose logs kafka temporal`.
 * **Ein Fall bleibt hängen**: `docker compose logs orchestrator mde-agent jav-agent`

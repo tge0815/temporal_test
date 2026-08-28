@@ -35,7 +35,10 @@ async function start() {
   fuelleSelect("sel-koerperteil", stamm.koerperteile, "Bein");
   fuelleSelect("sel-schwere", stamm.schweregrade, "mittel");
   document.getElementById("topic-name").textContent = stamm.kafka_topic;
-  document.getElementById("temporal-link").href = stamm.temporal_ui;
+  // Den Link zur Temporal-Oberflaeche aus der Adresse bauen, unter der dieses
+  // Dashboard gerade laeuft. So stimmt er auch beim Zugriff ueber die VM-IP.
+  document.getElementById("temporal-link").href = stamm.temporal_ui
+    || `${location.protocol}//${location.hostname}:${stamm.temporal_ui_port}`;
 
   document.getElementById("unfall-form").addEventListener("submit", absenden);
   document.getElementById("dialog-zu").addEventListener("click", dialogSchliessen);

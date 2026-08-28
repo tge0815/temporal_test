@@ -14,7 +14,11 @@ DB_DSN = os.getenv(
 # --- Temporal --------------------------------------------------------------
 TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "temporal:7233")
 TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
-TEMPORAL_UI_URL = os.getenv("TEMPORAL_UI_URL", "http://localhost:8233")
+# Leer lassen (Normalfall): das Dashboard baut den Link zur Temporal-Oberflaeche
+# selbst aus der Adresse, unter der Sie es aufgerufen haben - so funktioniert es
+# ueber localhost genauso wie ueber die echte IP der VM.
+TEMPORAL_UI_URL = os.getenv("TEMPORAL_UI_URL", "")
+TEMPORAL_UI_PORT = os.getenv("TEMPORAL_UI_PORT", "28233")
 
 # --- Task-Queues (je Agent eine eigene = je Agent ein eigener Service) -----
 QUEUE_ORCHESTRATOR = "orchestrator-queue"

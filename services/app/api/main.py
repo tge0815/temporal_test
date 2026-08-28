@@ -92,7 +92,10 @@ async def stammdaten() -> dict:
                          "Kopf", "Schulter", "Knie", "Sonstiges"],
         "schweregrade": ["leicht", "mittel", "schwer", "sehr schwer"],
         "kafka_topic": config.KAFKA_TOPIC_UNFALL,
-        "temporal_ui": config.TEMPORAL_UI_URL,
+        # Nur gesetzt, wenn ausdruecklich per TEMPORAL_UI_URL vorgegeben.
+        # Sonst baut die Oberflaeche den Link aus Hostname + Port zusammen.
+        "temporal_ui": config.TEMPORAL_UI_URL or None,
+        "temporal_ui_port": config.TEMPORAL_UI_PORT,
     }
 
 

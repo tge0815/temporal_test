@@ -1,7 +1,12 @@
 # =============================================================================
 #  Unfallversicherung - ereignisgetriebene Sachbearbeitung (MVP)
+#
 #  Start mit:  docker compose up
-#  Dann oeffnen:  http://localhost:8080
+#  Dann oeffnen:  http://<HOST_IP>:<DASHBOARD_PORT>   (Standard: Port 28080)
+#
+#  IP-Adresse und Ports stehen in der Datei .env im selben Ordner.
+#  Dort HOST_IP auf die IP Ihrer Docker-VM setzen, sonst zeigen die Links
+#  im Dashboard auf localhost.
 # =============================================================================
 
 # Alle sechs Anwendungs-Services teilen sich EIN Image (wird nur einmal gebaut).
@@ -15,7 +20,10 @@ x-app: &app
     DATABASE_URL: postgresql://postgres:postgres@postgres:5432/unfall
     TEMPORAL_HOST: temporal:7233
     TEMPORAL_NAMESPACE: default
-    TEMPORAL_UI_URL: http://localhost:8233
+    # Leer lassen: das Dashboard baut den Link zur Temporal-Oberflaeche
+    # aus der Adresse, mit der Sie es selbst aufgerufen haben.
+    TEMPORAL_UI_URL: "${TEMPORAL_UI_URL:-}"
+    TEMPORAL_UI_PORT: "${TEMPORAL_UI_PORT:-28233}"
     PYTHONPATH: /app
   restart: unless-stopped
 
@@ -32,7 +40,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: unfall
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-25432}:5432"
     volumes:
       - postgres-daten:/var/lib/postgresql/data
     healthcheck:
@@ -48,13 +56,17 @@ services:
     image: apache/kafka:3.8.1
     container_name: uv-kafka
     ports:
-      - "9092:9092"    # fuer Werkzeuge auf dem Host
+      - "${KAFKA_PORT:-29092}:29092"   # fuer Kafka-Werkzeuge ausserhalb der VM
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      # PLAINTEXT = innerhalb des Compose-Netzes, EXTERN = von aussen.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERN://0.0.0.0:29092
+      # Wichtig: Kafka nennt jedem Client die Adresse, unter der er sich
+      # verbinden soll. Fuer Clients ausserhalb der VM muss das die echte
+      # IP und der veroeffentlichte Port sein - daher HOST_IP aus der .env.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERN://${HOST_IP:-localhost}:${KAFKA_PORT:-29092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERN:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -90,7 +102,7 @@ services:
       POSTGRES_SEEDS: postgres
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
     ports:
-      - "7233:7233"
+      - "${TEMPORAL_PORT:-27233}:7233"
     healthcheck:
       test: ["CMD-SHELL", "temporal operator cluster health --address temporal:7233 || exit 1"]
       interval: 10s
@@ -106,20 +118,21 @@ services:
       - temporal
     environment:
       TEMPORAL_ADDRESS: temporal:7233
-      TEMPORAL_CORS_ORIGINS: http://localhost:8233
+      TEMPORAL_CORS_ORIGINS: http://${HOST_IP:-localhost}:${TEMPORAL_UI_PORT:-28233}
     ports:
-      - "8233:8080"
+      - "${TEMPORAL_UI_PORT:-28233}:8080"
     restart: unless-stopped
 
   # ---------------------------------------------------------------------
-  # Dashboard + REST-API + Kafka-Producer  ->  http://localhost:8080
+  # Dashboard + REST-API + Kafka-Producer
+  # ->  http://<HOST_IP>:<DASHBOARD_PORT>
   # ---------------------------------------------------------------------
   dashboard-api:
     <<: *app
     container_name: uv-dashboard
     command: uvicorn api.main:app --host 0.0.0.0 --port 8080
     ports:
-      - "8080:8080"
+      - "${DASHBOARD_PORT:-28080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
