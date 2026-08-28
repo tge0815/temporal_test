@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unfallversicherung – Ereignisgetriebene Sachbearbeitung</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏥</text></svg>">
+<link rel="stylesheet" href="/static/stil.css">
+</head>
+<body>
+<header>
+  <div class="marke">
+    <span class="logo">UV</span>
+    <div>
+      <h1>Unfallversicherung – Sachbearbeitung</h1>
+      <p class="untertitel">Ereignisgetriebene Demo: Kafka → Event-Consumer → Temporal → Agenten</p>
+    </div>
+  </div>
+  <div class="kopf-links">
+    <a id="temporal-link" href="http://localhost:8233" target="_blank" rel="noopener">Temporal-Oberfläche ↗</a>
+    <span id="health" class="pill pill-grau">verbinde …</span>
+  </div>
+</header>
+
+<main>
+  <!-- ============ Linke Spalte: Formular ============ -->
+  <section class="karte" id="formular-karte">
+    <h2>1 · Unfall melden</h2>
+    <p class="hilfe">Beim Absenden wird ein <strong>echtes Kafka-Event</strong> auf das Topic
+      <code id="topic-name">unfall.gemeldet</code> geschrieben. Danach läuft alles automatisch.</p>
+
+    <form id="unfall-form">
+      <label>Name der versicherten Person
+        <input name="versicherter" required minlength="2" value="Max Mustermann">
+      </label>
+      <div class="zeile">
+        <label>Geburtsjahr
+          <input name="geburtsjahr" type="number" min="1930" max="2015" required value="1985">
+        </label>
+        <label>Unfalldatum
+          <input name="unfall_datum" type="date" required>
+        </label>
+      </div>
+      <label>Beruf
+        <select name="beruf" id="sel-beruf"></select>
+      </label>
+      <div class="zeile">
+        <label>Betroffenes Körperteil
+          <select name="koerperteil" id="sel-koerperteil"></select>
+        </label>
+        <label>Schweregrad
+          <select name="schwere" id="sel-schwere"></select>
+        </label>
+      </div>
+      <label>Unfallhergang
+        <textarea name="hergang" rows="3">Sturz von einem Gerüst aus etwa 3 Metern Höhe auf der Baustelle.</textarea>
+      </label>
+      <button type="submit" id="absenden">Unfall melden → Event auslösen</button>
+      <div id="form-meldung" class="meldung"></div>
+    </form>
+
+    <div class="legende">
+      <h3>Was passiert danach?</h3>
+      <ol class="schritt-legende">
+        <li><b>Eingang</b> – <span>event-consumer liest das Kafka-Event und speichert den Fall</span></li>
+        <li><b>MdE-Ermittlung</b> – <span>mde-agent schätzt die Minderung der Erwerbsfähigkeit</span></li>
+        <li><b>JAV-Ermittlung</b> – <span>jav-agent ermittelt den Jahresarbeitsverdienst</span></li>
+        <li><b>Rentenberechnung</b> – <span>feste Formel: 2/3 × JAV × MdE/100</span></li>
+        <li><b>Ergebnis</b> – <span>Fall abgeschlossen, Rentenbetrag steht fest</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ============ Rechte Spalte: Fälle ============ -->
+  <section class="karte" id="faelle-karte">
+    <div class="karte-kopf">
+      <h2>2 · Fälle live verfolgen</h2>
+      <span class="puls" id="puls">Aktualisierung jede Sekunde</span>
+    </div>
+    <div id="faelle-liste"></div>
+    <p id="leer-hinweis" class="hilfe">Noch keine Fälle. Melde links einen Unfall.</p>
+  </section>
+</main>
+
+<!-- ============ Detail-Dialog ============ -->
+<div id="overlay" class="overlay" hidden>
+  <div class="dialog">
+    <button class="schliessen" id="dialog-zu" aria-label="Schließen">×</button>
+    <div id="dialog-inhalt"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

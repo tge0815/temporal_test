@@ -1,0 +1,208 @@
+# =============================================================================
+#  Unfallversicherung - ereignisgetriebene Sachbearbeitung (MVP)
+#  Start mit:  docker compose up
+#  Dann oeffnen:  http://localhost:8080
+# =============================================================================
+
+# Alle sechs Anwendungs-Services teilen sich EIN Image (wird nur einmal gebaut).
+x-app: &app
+  build:
+    context: ./services/app
+  image: unfall-mvp-app:local
+  environment:
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    KAFKA_TOPIC_UNFALL: unfall.gemeldet
+    DATABASE_URL: postgresql://postgres:postgres@postgres:5432/unfall
+    TEMPORAL_HOST: temporal:7233
+    TEMPORAL_NAMESPACE: default
+    TEMPORAL_UI_URL: http://localhost:8233
+    PYTHONPATH: /app
+  restart: unless-stopped
+
+services:
+
+  # ---------------------------------------------------------------------
+  # Persistenter Speicher: Faelle + Verlauf (und die Temporal-Datenbank)
+  # ---------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: uv-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: unfall
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-daten:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------
+  # Message Broker: Apache Kafka im KRaft-Modus (kein Zookeeper noetig)
+  # ---------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:3.8.1
+    container_name: uv-kafka
+    ports:
+      - "9092:9092"    # fuer Werkzeuge auf dem Host
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: 5L6g3nShT-eMCtK--X86sw
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  # ---------------------------------------------------------------------
+  # Orchestrator-Engine: echter Temporal-Server
+  # ---------------------------------------------------------------------
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    container_name: uv-temporal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PWD: postgres
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports:
+      - "7233:7233"
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address temporal:7233 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  # Web-Oberflaeche von Temporal: dort sieht man den Workflow "von innen".
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    container_name: uv-temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8233
+    ports:
+      - "8233:8080"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------
+  # Dashboard + REST-API + Kafka-Producer  ->  http://localhost:8080
+  # ---------------------------------------------------------------------
+  dashboard-api:
+    <<: *app
+    container_name: uv-dashboard
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # Eingang: liest Unfall-Events von Kafka, speichert sie und startet
+  # den Temporal-Workflow.
+  # ---------------------------------------------------------------------
+  event-consumer:
+    <<: *app
+    container_name: uv-event-consumer
+    command: python -m consumer.main
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      temporal:
+        # bewusst nur service_started: die Worker haben eine eigene
+        # Retry-Schleife und warten geduldig, bis Temporal bereit ist.
+        condition: service_started
+
+  # ---------------------------------------------------------------------
+  # Orchestrator: haelt die Workflow-Definition (MdE -> JAV -> Rente)
+  # ---------------------------------------------------------------------
+  orchestrator:
+    <<: *app
+    container_name: uv-orchestrator
+    command: python -m orchestrator.worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        # bewusst nur service_started: die Worker haben eine eigene
+        # Retry-Schleife und warten geduldig, bis Temporal bereit ist.
+        condition: service_started
+
+  # ---------------------------------------------------------------------
+  # Agent 1: MdE-Ermittlung (simuliert, mit Konfidenz + Begruendung)
+  # ---------------------------------------------------------------------
+  mde-agent:
+    <<: *app
+    container_name: uv-mde-agent
+    command: python -m agenten.mde_agent
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        # bewusst nur service_started: die Worker haben eine eigene
+        # Retry-Schleife und warten geduldig, bis Temporal bereit ist.
+        condition: service_started
+
+  # ---------------------------------------------------------------------
+  # Agent 2: JAV-Ermittlung (simuliert, mit Konfidenz + Begruendung)
+  # ---------------------------------------------------------------------
+  jav-agent:
+    <<: *app
+    container_name: uv-jav-agent
+    command: python -m agenten.jav_agent
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        # bewusst nur service_started: die Worker haben eine eigene
+        # Retry-Schleife und warten geduldig, bis Temporal bereit ist.
+        condition: service_started
+
+  # ---------------------------------------------------------------------
+  # Rentenberechnung: DETERMINISTISCH, echte Rechenregel, kein Agent
+  # ---------------------------------------------------------------------
+  rentenberechnung:
+    <<: *app
+    container_name: uv-rentenberechnung
+    command: python -m agenten.rentenberechnung
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        # bewusst nur service_started: die Worker haben eine eigene
+        # Retry-Schleife und warten geduldig, bis Temporal bereit ist.
+        condition: service_started
+
+volumes:
+  postgres-daten:
