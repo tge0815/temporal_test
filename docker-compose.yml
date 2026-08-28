@@ -28,7 +28,18 @@ x-app: &app
     # aus der Adresse, mit der Sie es selbst aufgerufen haben.
     TEMPORAL_UI_URL: "${TEMPORAL_UI_URL:-}"
     TEMPORAL_UI_PORT: "${TEMPORAL_UI_PORT:-28233}"
+    # Wie lange der Workflow auf Gutachten bzw. Entgeltmeldung wartet,
+    # bevor er eine Erinnerung verschickt (und danach weiter wartet).
+    FRIST_GUTACHTEN_SEKUNDEN: "${FRIST_GUTACHTEN_SEKUNDEN:-30}"
+    FRIST_ENTGELTMELDUNG_SEKUNDEN: "${FRIST_ENTGELTMELDUNG_SEKUNDEN:-30}"
+    CLAUDE_MODELL: "${CLAUDE_MODELL:-claude-opus-5}"
     PYTHONPATH: /app
+  # Der Claude-API-Schluessel kommt aus einer eigenen Datei, die NICHT im Git
+  # liegt (siehe .gitignore). Fehlt sie, startet alles trotzdem - der
+  # mde-agent nutzt dann eine Textsuche statt Claude.
+  env_file:
+    - path: ./geheim.env
+      required: false
   restart: unless-stopped
 
 services:

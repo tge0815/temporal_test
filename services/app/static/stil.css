@@ -99,6 +99,48 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .pill-gelb { background: rgba(242,181,68,.16); color: var(--gelb); }
 .pill-gruen { background: rgba(53,201,138,.16); color: var(--gruen); }
 .pill-rot { background: rgba(239,95,107,.16); color: var(--rot); }
+.pill-lila { background: rgba(167,139,250,.18); color: var(--lila); }
+
+/* ---------- Aktion bei wartendem Workflow ---------- */
+.aktion {
+  margin-top: 14px; padding: 13px 14px; cursor: default;
+  background: rgba(167,139,250,.07);
+  border: 1px dashed rgba(167,139,250,.45); border-radius: 10px;
+}
+.aktion-kopf { font-weight: 600; font-size: 13.5px; color: var(--lila); }
+.aktion-text { margin: 6px 0 11px; font-size: 12.5px; color: var(--gedimmt); line-height: 1.5; }
+.aktion-zeile { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.aktion-zeile input[type="file"] { font-size: 12px; padding: 6px; flex: 1 1 190px; }
+.aktion-zeile input[type="number"] { font-size: 13px; padding: 7px 9px; width: 165px; }
+button.klein {
+  margin: 0; padding: 8px 13px; font-size: 13px; border-radius: 8px; width: auto;
+}
+button.klein.sekundaer { background: #2c3756; color: var(--text); }
+.aktion-link {
+  display: inline-block; margin-top: 10px; font-size: 12px;
+  color: var(--akzent); text-decoration: none;
+}
+.aktion-link:hover { text-decoration: underline; }
+.aktion-meldung { font-size: 12.5px; margin-top: 8px; min-height: 16px; }
+.aktion-meldung.ok { color: var(--gruen); }
+.aktion-meldung.fehler { color: var(--rot); }
+
+/* ---------- Dokumentenliste ---------- */
+.dokumente { display: flex; flex-direction: column; gap: 8px; }
+.dokument {
+  display: flex; gap: 11px; align-items: center; text-decoration: none;
+  background: var(--karte2); border: 1px solid var(--rand);
+  border-radius: 9px; padding: 10px 12px; color: var(--text); font-size: 13px;
+}
+.dokument:hover { border-color: var(--akzent); }
+.dok-symbol { font-size: 20px; }
+.dok-meta { color: var(--gedimmt); font-size: 11.5px; }
+
+.fundstelle {
+  margin-top: 7px; padding: 8px 11px; font-size: 12.5px; line-height: 1.5;
+  background: rgba(53,201,138,.07); border-left: 3px solid var(--gruen);
+  border-radius: 0 7px 7px 0; color: #b7e6cd; font-style: italic;
+}
 
 /* ---------- Fortschrittsleiste ---------- */
 .pipeline { display: flex; gap: 6px; margin-top: 12px; }
@@ -106,10 +148,12 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .stufe .balken { height: 6px; border-radius: 3px; background: #2c3756; }
 .stufe.fertig .balken { background: var(--gruen); }
 .stufe.aktiv .balken { background: var(--gelb); animation: laufen 1.2s ease-in-out infinite; }
+.stufe.wartet .balken { background: var(--lila); animation: laufen 2s ease-in-out infinite; }
 @keyframes laufen { 50% { opacity: .35; } }
 .stufe .name { font-size: 10.5px; color: var(--gedimmt); margin-top: 5px; display: block; }
 .stufe.fertig .name { color: var(--text); }
 .stufe.aktiv .name { color: var(--gelb); font-weight: 600; }
+.stufe.wartet .name { color: var(--lila); font-weight: 600; }
 
 .werte { display: flex; gap: 18px; margin-top: 12px; flex-wrap: wrap; }
 .wert { font-size: 12.5px; color: var(--gedimmt); }
@@ -160,6 +204,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .eintrag.abgeschlossen::before { border-color: var(--gruen); background: var(--gruen); }
 .eintrag.in_arbeit::before { border-color: var(--gelb); background: var(--gelb); }
 .eintrag.gestartet::before { border-color: var(--akzent); background: var(--akzent); }
+.eintrag.wartet::before { border-color: var(--lila); background: var(--karte); }
+.eintrag.erinnerung::before { border-color: var(--gelb); background: var(--karte); }
 .eintrag-kopf { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 .eintrag-schritt { font-weight: 600; }
 .eintrag-komponente { font-size: 11.5px; color: var(--lila); background: rgba(167,139,250,.12);

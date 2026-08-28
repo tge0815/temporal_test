@@ -30,3 +30,15 @@ QUEUE_RENTE = "rentenberechnung-queue"
 # Kuenstliche Verzoegerung der Agenten, damit man im Dashboard zusehen kann.
 AGENT_MIN_DAUER = float(os.getenv("AGENT_MIN_DAUER", "2.5"))
 AGENT_MAX_DAUER = float(os.getenv("AGENT_MAX_DAUER", "5.0"))
+
+# --- Externe Beteiligte: Wartezeiten -----------------------------------------
+# Nach dieser Frist ohne Antwort schickt der Workflow eine Erinnerung und
+# wartet danach weiter. In der Realität wären das Tage oder Wochen.
+FRIST_GUTACHTEN = float(os.getenv("FRIST_GUTACHTEN_SEKUNDEN", "30"))
+FRIST_ENTGELTMELDUNG = float(os.getenv("FRIST_ENTGELTMELDUNG_SEKUNDEN", "30"))
+
+# --- Claude API (optional) ---------------------------------------------------
+# Ist ein Schlüssel gesetzt, liest der mde-agent den MdE-Wert mit Claude aus dem
+# hochgeladenen Gutachten. Ohne Schlüssel greift ein Regelwerk (Textsuche).
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+CLAUDE_MODELL = os.getenv("CLAUDE_MODELL", "claude-opus-5")

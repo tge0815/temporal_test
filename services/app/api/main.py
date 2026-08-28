@@ -15,13 +15,14 @@ from pathlib import Path
 
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from common import config, db
+from common import config, db, gutachten
 from common.temporal_util import verbinde
+from agenten.jav_agent import simulierte_meldung
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("dashboard-api")
@@ -110,6 +111,8 @@ async def stammdaten() -> dict:
                          "Kopf", "Schulter", "Knie", "Sonstiges"],
         "schweregrade": ["leicht", "mittel", "schwer", "sehr schwer"],
         "kafka_topic": config.KAFKA_TOPIC_UNFALL,
+        "claude_aktiv": bool(config.ANTHROPIC_API_KEY),
+        "claude_modell": config.CLAUDE_MODELL if config.ANTHROPIC_API_KEY else None,
         # Nur gesetzt, wenn ausdruecklich per TEMPORAL_UI_URL vorgegeben.
         # Sonst baut die Oberflaeche den Link aus Hostname + Port zusammen.
         "temporal_ui": config.TEMPORAL_UI_URL or None,
@@ -172,6 +175,7 @@ async def fall(fall_id: str) -> dict:
     if not daten:
         raise HTTPException(404, "Fall nicht gefunden")
     daten["verlauf"] = await db.verlauf_lesen(fall_id)
+    daten["dokumente"] = await db.dokumente_lesen(fall_id)
     return daten
 
 
@@ -205,6 +209,141 @@ async def workflow_zustand(fall_id: str) -> JSONResponse:
         return JSONResponse(antwort)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"verfuegbar": False, "grund": str(e)})
+
+
+# --- Gutachten und Entgeltmeldung -----------------------------------------
+
+MAX_UPLOAD = 10 * 1024 * 1024   # 10 MB reichen fuer ein Gutachten reichlich
+
+
+async def _signal_senden(fall: dict, signal: str, nutzlast: dict) -> None:
+    """Weckt den wartenden Temporal-Workflow."""
+    if zustand["temporal"] is None:
+        raise HTTPException(503, "Temporal nicht erreichbar")
+    if not fall.get("workflow_id"):
+        raise HTTPException(409, "Zu diesem Fall läuft noch kein Workflow")
+    handle = zustand["temporal"].get_workflow_handle(fall["workflow_id"])
+    await handle.signal(signal, nutzlast)
+    log.info("Signal '%s' an Workflow %s gesendet", signal, fall["workflow_id"])
+
+
+@app.get("/api/faelle/{fall_id}/beispiel-gutachten")
+async def beispiel_gutachten(fall_id: str) -> Response:
+    """Erzeugt ein Beispiel-Gutachten als PDF zum Herunterladen."""
+    _db_bereit()
+    fall = await db.fall_lesen(fall_id)
+    if not fall:
+        raise HTTPException(404, "Fall nicht gefunden")
+    pdf, _ = gutachten.beispiel_gutachten_pdf(fall)
+    dateiname = f"Gutachten-{fall['fall_nummer']}.pdf"
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{dateiname}"'},
+    )
+
+
+@app.post("/api/faelle/{fall_id}/gutachten", status_code=202)
+async def gutachten_hochladen(fall_id: str,
+                              datei: UploadFile = File(...)) -> dict:
+    """Nimmt das Gutachten entgegen und weckt damit den wartenden Workflow."""
+    _db_bereit()
+    fall = await db.fall_lesen(fall_id)
+    if not fall:
+        raise HTTPException(404, "Fall nicht gefunden")
+    if fall["status"] != "WARTE_AUF_GUTACHTEN":
+        raise HTTPException(
+            409, f"Dieser Fall wartet gerade nicht auf ein Gutachten "
+                 f"(Status: {fall['status']})")
+
+    inhalt = await datei.read()
+    if not inhalt:
+        raise HTTPException(400, "Die Datei ist leer")
+    if len(inhalt) > MAX_UPLOAD:
+        raise HTTPException(413, "Die Datei ist größer als 10 MB")
+
+    dok_id = str(uuid.uuid4())
+    await db.dokument_speichern(dok_id, fall_id, "GUTACHTEN",
+                               datei.filename or "gutachten",
+                               datei.content_type, inhalt)
+    await db.verlauf_schreiben(
+        fall_id, "Gutachten", "dashboard-api", "ABGESCHLOSSEN",
+        f"Gutachten '{datei.filename}' eingegangen ({len(inhalt) // 1024} KB). "
+        f"Der wartende Workflow wird per Temporal-Signal geweckt.",
+        {"dokument_id": dok_id, "dateiname": datei.filename,
+         "medientyp": datei.content_type, "groesse_bytes": len(inhalt),
+         "signal": "gutachten_eingegangen"},
+    )
+    await _signal_senden(fall, "gutachten_eingegangen", {
+        "dokument_id": dok_id,
+        "dateiname": datei.filename,
+        "medientyp": datei.content_type,
+    })
+    return {"dokument_id": dok_id, "hinweis": "Gutachten gespeichert, "
+                                              "Workflow geweckt."}
+
+
+class Entgeltmeldung(BaseModel):
+    jav_euro: float = Field(gt=0, le=1_000_000)
+    quelle: str = Field(default="Entgeltmeldung des Unternehmers",
+                        max_length=200)
+
+
+@app.post("/api/faelle/{fall_id}/entgeltmeldung", status_code=202)
+async def entgeltmeldung(fall_id: str, meldung: Entgeltmeldung) -> dict:
+    """Erfasst die Entgeltmeldung und weckt den wartenden Workflow."""
+    return await _entgeltmeldung_einspielen(
+        fall_id, meldung.jav_euro, meldung.quelle)
+
+
+@app.post("/api/faelle/{fall_id}/entgeltmeldung/simulieren", status_code=202)
+async def entgeltmeldung_simulieren(fall_id: str) -> dict:
+    """Spielt eine plausible Antwort des Unternehmers ein."""
+    _db_bereit()
+    fall = await db.fall_lesen(fall_id)
+    if not fall:
+        raise HTTPException(404, "Fall nicht gefunden")
+    erzeugt = simulierte_meldung(fall)
+    return await _entgeltmeldung_einspielen(
+        fall_id, erzeugt["jav_euro"], erzeugt["quelle"])
+
+
+async def _entgeltmeldung_einspielen(fall_id: str, jav_euro: float,
+                                     quelle: str) -> dict:
+    _db_bereit()
+    fall = await db.fall_lesen(fall_id)
+    if not fall:
+        raise HTTPException(404, "Fall nicht gefunden")
+    if fall["status"] != "WARTE_AUF_ENTGELTMELDUNG":
+        raise HTTPException(
+            409, f"Dieser Fall wartet gerade nicht auf eine Entgeltmeldung "
+                 f"(Status: {fall['status']})")
+
+    await db.verlauf_schreiben(
+        fall_id, "Entgeltmeldung", "dashboard-api", "ABGESCHLOSSEN",
+        f"Entgeltmeldung eingegangen: {jav_euro:.2f} EUR Jahresbrutto "
+        f"({quelle}). Der wartende Workflow wird geweckt.",
+        {"jav_euro": jav_euro, "quelle": quelle,
+         "signal": "entgeltmeldung_eingegangen"},
+    )
+    await _signal_senden(fall, "entgeltmeldung_eingegangen",
+                         {"jav_euro": jav_euro, "quelle": quelle})
+    return {"jav_euro": jav_euro, "quelle": quelle,
+            "hinweis": "Meldung erfasst, Workflow geweckt."}
+
+
+@app.get("/api/faelle/{fall_id}/dokumente/{dok_id}")
+async def dokument_herunterladen(fall_id: str, dok_id: str) -> Response:
+    """Liefert ein hochgeladenes Dokument zurück."""
+    _db_bereit()
+    dok = await db.dokument_lesen(dok_id)
+    if not dok or dok["fall_id"] != fall_id:
+        raise HTTPException(404, "Dokument nicht gefunden")
+    return Response(
+        content=dok["inhalt"],
+        media_type=dok.get("medientyp") or "application/octet-stream",
+        headers={"Content-Disposition":
+                 f'inline; filename="{dok["dateiname"]}"'},
+    )
 
 
 @app.get("/api/health")

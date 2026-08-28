@@ -26,7 +26,10 @@ async def _verbinde_mit_retry(versuche: int = 60) -> asyncpg.Pool:
     letzter_fehler: Exception | None = None
     for i in range(versuche):
         try:
-            p = await asyncpg.create_pool(config.DB_DSN, min_size=1, max_size=8)
+            # Klein halten: sechs Dienste teilen sich die Datenbank mit
+            # Temporal, das eigene Pools mitbringt. 6 x 4 = 24 Verbindungen
+            # lassen genug Luft unter PostgreSQLs max_connections (100).
+            p = await asyncpg.create_pool(config.DB_DSN, min_size=1, max_size=4)
             await _schema_anlegen(p)
             log.info("PostgreSQL verbunden")
             return p
@@ -78,13 +81,47 @@ CREATE TABLE IF NOT EXISTS fall_verlauf (
     zeitpunkt   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS dokumente (
+    id             UUID PRIMARY KEY,
+    fall_id        UUID NOT NULL REFERENCES faelle(id) ON DELETE CASCADE,
+    art            TEXT NOT NULL,
+    dateiname      TEXT NOT NULL,
+    medientyp      TEXT,
+    groesse        INT,
+    inhalt         BYTEA NOT NULL,
+    hochgeladen_am TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_verlauf_fall ON fall_verlauf (fall_id, id);
+CREATE INDEX IF NOT EXISTS idx_dokumente_fall ON dokumente (fall_id, id);
+
+-- Nachtraeglich ergaenzte Spalten (aeltere Datenbanken aktualisieren sich so
+-- beim naechsten Start von selbst).
+ALTER TABLE faelle ADD COLUMN IF NOT EXISTS mde_quelle    TEXT;
+ALTER TABLE faelle ADD COLUMN IF NOT EXISTS jav_gemeldet  NUMERIC;
+ALTER TABLE faelle ADD COLUMN IF NOT EXISTS jav_quelle    TEXT;
 """
 
 
+# Beliebige, aber feste Zahl - nur dieses Projekt benutzt sie.
+SCHEMA_SPERRE = 728301
+
+
 async def _schema_anlegen(p: asyncpg.Pool) -> None:
+    """Legt Tabellen und Spalten an - aber immer nur ein Dienst gleichzeitig.
+
+    Alle sechs Dienste starten zusammen und wuerden das DDL sonst parallel
+    ausfuehren. ALTER TABLE nimmt eine exklusive Sperre auf die Tabelle, und
+    sobald mehrere davon in der Warteschlange stehen, blockieren sie auch
+    lesende Anfragen - das Dashboard haengt dann sekundenlang. Die
+    Advisory-Sperre serialisiert den Start sauber.
+    """
     async with p.acquire() as con:
-        await con.execute(SCHEMA)
+        await con.execute("SELECT pg_advisory_lock($1)", SCHEMA_SPERRE)
+        try:
+            await con.execute(SCHEMA)
+        finally:
+            await con.execute("SELECT pg_advisory_unlock($1)", SCHEMA_SPERRE)
 
 
 # --- Schreiboperationen ----------------------------------------------------
@@ -136,6 +173,7 @@ async def fall_aktualisieren(fall_id: str, **felder: Any) -> None:
     erlaubt = {
         "status", "mde_prozent", "mde_konfidenz", "mde_begruendung",
         "jav_euro", "jav_konfidenz", "jav_begruendung",
+        "mde_quelle", "jav_gemeldet", "jav_quelle",
         "rente_jahr", "rente_monat", "rente_formel",
         "workflow_id", "workflow_run_id",
     }
@@ -149,6 +187,44 @@ async def fall_aktualisieren(fall_id: str, **felder: Any) -> None:
             f"UPDATE faelle SET {zuweisungen}, geaendert_am = now() WHERE id = $1",
             fall_id, *felder.values(),
         )
+
+
+async def dokument_speichern(dok_id: str, fall_id: str, art: str, dateiname: str,
+                             medientyp: str | None, inhalt: bytes) -> None:
+    p = await pool()
+    async with p.acquire() as con:
+        await con.execute(
+            """INSERT INTO dokumente (id, fall_id, art, dateiname, medientyp,
+                                      groesse, inhalt)
+               VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+            dok_id, fall_id, art, dateiname, medientyp, len(inhalt), inhalt,
+        )
+
+
+async def dokument_lesen(dok_id: str) -> dict | None:
+    p = await pool()
+    async with p.acquire() as con:
+        z = await con.fetchrow("SELECT * FROM dokumente WHERE id = $1", dok_id)
+    if not z:
+        return None
+    d = dict(z)
+    inhalt = d.pop("inhalt")
+    d = _zeile_zu_dict(d)
+    d["inhalt"] = bytes(inhalt)
+    return d
+
+
+async def dokumente_lesen(fall_id: str) -> list[dict]:
+    """Ohne den Dateiinhalt - nur die Metadaten fuer die Anzeige."""
+    p = await pool()
+    async with p.acquire() as con:
+        zeilen = await con.fetch(
+            """SELECT id, fall_id, art, dateiname, medientyp, groesse,
+                      hochgeladen_am
+               FROM dokumente WHERE fall_id = $1 ORDER BY hochgeladen_am""",
+            fall_id,
+        )
+    return [_zeile_zu_dict(z) for z in zeilen]
 
 
 # --- Leseoperationen -------------------------------------------------------
@@ -179,7 +255,7 @@ async def verlauf_lesen(fall_id: str) -> list[dict]:
 
 
 def _zeile_zu_dict(zeile) -> dict:
-    d = dict(zeile)
+    d = dict(zeile)  # akzeptiert asyncpg-Record und dict
     for k, v in list(d.items()):
         if isinstance(v, datetime):
             d[k] = v.astimezone(timezone.utc).isoformat()

@@ -63,11 +63,14 @@
       <h3>Was passiert danach?</h3>
       <ol class="schritt-legende">
         <li><b>Eingang</b> – <span>event-consumer liest das Kafka-Event und speichert den Fall</span></li>
-        <li><b>MdE-Ermittlung</b> – <span>mde-agent schätzt die Minderung der Erwerbsfähigkeit</span></li>
-        <li><b>JAV-Ermittlung</b> – <span>jav-agent ermittelt den Jahresarbeitsverdienst</span></li>
+        <li><b>Gutachten</b> – <span>Auftrag an die Praxis; der Workflow <em>wartet</em>, bis Sie es hochladen</span></li>
+        <li><b>MdE-Ermittlung</b> – <span>mde-agent liest die MdE aus dem Gutachten</span></li>
+        <li><b>Entgeltmeldung</b> – <span>Anfrage an Unternehmer und Versicherten; der Workflow <em>wartet</em> erneut</span></li>
+        <li><b>JAV-Ermittlung</b> – <span>jav-agent prüft die gemeldete Summe auf Plausibilität</span></li>
         <li><b>Rentenberechnung</b> – <span>feste Formel: 2/3 × JAV × MdE/100</span></li>
         <li><b>Ergebnis</b> – <span>Fall abgeschlossen, Rentenbetrag steht fest</span></li>
       </ol>
+      <p class="hilfe" id="extraktion-hinweis"></p>
     </div>
   </section>
 

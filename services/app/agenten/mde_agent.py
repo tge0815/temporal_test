@@ -1,9 +1,12 @@
 """mde-agent: ermittelt die Minderung der Erwerbsfähigkeit (MdE) in Prozent.
 
-DEMO-HINWEIS: Der Agent "denkt" hier nicht wirklich. Er leitet einen
-plausiblen Wert aus den Eingabedaten ab und wuerfelt eine kleine Streuung
-dazu - inklusive Konfidenzwert und kurzer Begruendung. In der echten Welt
-saesse hier ein KI-Agent oder ein Regelwerk mit aerztlichem Gutachten.
+Der Agent liest den Wert aus dem hochgeladenen **Gutachten** – so, wie es eine
+Sachbearbeiterin auch täte. Ist ein Claude-API-Schlüssel hinterlegt, liest
+Claude das Dokument; ohne Schlüssel greift eine Textsuche. Beides liefert
+Konfidenzwert, Begründung und die Fundstelle im Gutachten.
+
+Kommt gar kein Gutachten (sollte nicht vorkommen, der Workflow wartet ja
+darauf), schätzt der Agent ersatzweise aus den Falldaten.
 """
 import asyncio
 import logging
@@ -12,76 +15,94 @@ import random
 from temporalio import activity
 from temporalio.worker import Worker
 
-from common import config, db
+from common import config, db, gutachten
 from common.temporal_util import verbinde
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("mde-agent")
 
-# Erfahrungswerte (frei erfunden, aber plausibel) je Körperteil: MdE-Basis in %
-BASIS_KOERPERTEIL = {
-    "Hand": 20, "Arm": 30, "Bein": 30, "Fuß": 20, "Auge": 25,
-    "Wirbelsäule": 30, "Kopf": 35, "Schulter": 20, "Knie": 20, "Sonstiges": 15,
-}
-# Faktor je Schweregrad
-FAKTOR_SCHWERE = {"leicht": 0.4, "mittel": 0.8, "schwer": 1.3, "sehr schwer": 1.8}
-
 
 @activity.defn(name="ermittle_mde")
-async def ermittle_mde(fall: dict) -> dict:
+async def ermittle_mde(fall: dict, dokument: dict | None = None) -> dict:
     fall_id = fall["id"]
+    dok_id = (dokument or {}).get("dokument_id")
+
     await db.verlauf_schreiben(
         fall_id, "MdE-Ermittlung", "mde-agent", "IN_ARBEIT",
-        "Agent analysiert Körperteil, Schweregrad und Unfallhergang …",
-        {"eingang": {"koerperteil": fall.get("koerperteil"),
-                     "schwere": fall.get("schwere")}},
+        "Agent liest das eingegangene Gutachten …",
+        {"dokument": (dokument or {}).get("dateiname"),
+         "verfahren": "Claude" if config.ANTHROPIC_API_KEY else "Textsuche"},
     )
 
-    # Kuenstliche Denkzeit, damit man im Dashboard zusehen kann.
-    dauer = random.uniform(config.AGENT_MIN_DAUER, config.AGENT_MAX_DAUER)
-    await asyncio.sleep(dauer)
+    # Kurze Denkzeit, damit man den Schritt im Dashboard sieht.
+    await asyncio.sleep(random.uniform(config.AGENT_MIN_DAUER,
+                                       config.AGENT_MAX_DAUER))
 
-    koerperteil = fall.get("koerperteil") or "Sonstiges"
-    schwere = (fall.get("schwere") or "mittel").lower()
-    basis = BASIS_KOERPERTEIL.get(koerperteil, 15)
-    faktor = FAKTOR_SCHWERE.get(schwere, 0.8)
-
-    roh = basis * faktor * random.uniform(0.85, 1.15)
-    # MdE wird in der Praxis in 5er-Schritten festgesetzt, gedeckelt bei 100 %.
-    mde = int(min(100, max(10, round(roh / 5) * 5)))
-
-    konfidenz = round(random.uniform(0.72, 0.95), 2)
-    begruendung = (
-        f"Körperteil '{koerperteil}' (Basiswert {basis} %) bei Schweregrad "
-        f"'{schwere}' (Faktor {faktor}) ergibt rechnerisch {roh:.1f} %; "
-        f"auf {mde} % gerundet (MdE wird in 5er-Schritten festgesetzt)."
-    )
-
-    ergebnis = {
-        "mde_prozent": mde,
-        "konfidenz": konfidenz,
-        "begruendung": begruendung,
-        "dauer_sekunden": round(dauer, 1),
-    }
+    if dok_id:
+        ergebnis = await _aus_gutachten(dok_id)
+    else:
+        ergebnis = _ohne_gutachten(fall)
 
     await db.fall_aktualisieren(
-        fall_id, mde_prozent=mde, mde_konfidenz=konfidenz,
-        mde_begruendung=begruendung,
+        fall_id,
+        mde_prozent=ergebnis["mde_prozent"],
+        mde_konfidenz=ergebnis["konfidenz"],
+        mde_begruendung=ergebnis["begruendung"],
+        mde_quelle=ergebnis["quelle"],
     )
     await db.verlauf_schreiben(
         fall_id, "MdE-Ermittlung", "mde-agent", "ABGESCHLOSSEN",
-        f"MdE festgestellt: {mde} % (Konfidenz {int(konfidenz * 100)} %)",
+        f"MdE festgestellt: {ergebnis['mde_prozent']} % "
+        f"(Konfidenz {int(ergebnis['konfidenz'] * 100)} %)",
         ergebnis,
     )
-    log.info("Fall %s: MdE = %s %% (Konfidenz %s)", fall_id, mde, konfidenz)
+    log.info("Fall %s: MdE = %s %% (%s)", fall_id, ergebnis["mde_prozent"],
+             ergebnis["quelle"])
     return ergebnis
+
+
+async def _aus_gutachten(dok_id: str) -> dict:
+    dok = await db.dokument_lesen(dok_id)
+    if not dok:
+        raise RuntimeError(f"Dokument {dok_id} nicht gefunden")
+
+    text = gutachten.text_aus_dokument(
+        dok["inhalt"], dok.get("medientyp"), dok.get("dateiname", "")
+    )
+    if not text.strip():
+        raise RuntimeError("Aus dem Dokument ließ sich kein Text lesen "
+                           "(gescanntes Bild ohne Texterkennung?)")
+
+    ergebnis = await gutachten.mde_aus_gutachten(text)
+    ergebnis["dokument"] = dok.get("dateiname")
+    ergebnis["zeichen_im_dokument"] = len(text)
+    return ergebnis
+
+
+def _ohne_gutachten(fall: dict) -> dict:
+    """Notnagel: aus den Falldaten schätzen, wenn kein Gutachten vorliegt."""
+    mde = gutachten.plausibler_mde_wert(
+        fall.get("koerperteil") or "Sonstiges", fall.get("schwere") or "mittel"
+    )
+    return {
+        "mde_prozent": mde,
+        "konfidenz": 0.45,
+        "begruendung": f"Ohne Gutachten aus Körperteil "
+                       f"'{fall.get('koerperteil')}' und Schweregrad "
+                       f"'{fall.get('schwere')}' geschätzt: {mde} %.",
+        "fundstelle": "",
+        "quelle": "Schätzung aus den Falldaten (kein Gutachten vorhanden)",
+        "verfahren": "schaetzung",
+    }
 
 
 async def main() -> None:
     await db.pool()
     client = await verbinde()
     worker = Worker(client, task_queue=config.QUEUE_MDE, activities=[ermittle_mde])
-    log.info("mde-agent laeuft auf Queue '%s'", config.QUEUE_MDE)
+    log.info("mde-agent läuft auf Queue '%s' (Extraktion: %s)",
+             config.QUEUE_MDE,
+             "Claude" if config.ANTHROPIC_API_KEY else "Textsuche ohne API-Schlüssel")
     await worker.run()
 
 

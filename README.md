@@ -98,11 +98,28 @@ Sie müssen dafür nichts einstellen.
 3. Unter dem Knopf erscheint eine grüne Bestätigung mit der Fallnummer und der
    Stelle, an der das Ereignis in Kafka gelandet ist
    (z. B. `Topic unfall.gemeldet, Partition 0, Offset 3`).
-4. Rechts taucht der Fall auf und wandert **von selbst** durch fünf Stufen.
-   Die Leiste färbt sich Schritt für Schritt grün. Das dauert insgesamt ca. 10–15 Sekunden.
-5. Auf die Fallkarte **klicken** → es öffnet sich die Detailansicht mit dem
-   kompletten Verlauf: jeder Schritt mit Uhrzeit, Ergebnis, Konfidenz und Begründung,
-   dazu der Rechenweg der Rente und der Zustand des Temporal-Workflows.
+4. Rechts taucht der Fall auf. Nach wenigen Sekunden bleibt er bei
+   **„Wartet auf Gutachten"** stehen – das ist Absicht: In der Wirklichkeit
+   wird jetzt ein Gutachter beauftragt, und das dauert Wochen.
+5. In der lila umrandeten Box: auf **„Beispiel-Gutachten als PDF herunterladen"**
+   klicken. Sie bekommen ein fertiges Gutachten passend zu diesem Fall.
+6. Dieselbe Datei über **„Datei auswählen"** und **„Gutachten einreichen"**
+   wieder hochladen. Damit wird der wartende Workflow geweckt und der
+   **mde-agent** liest die MdE aus dem Dokument.
+7. Kurz darauf bleibt der Fall erneut stehen: **„Wartet auf Entgeltmeldung"**.
+   Tragen Sie ein Jahresbrutto ein und klicken **„Meldung erfassen"** – oder
+   klicken Sie **„Antwort simulieren"**.
+8. Der Rest läuft von selbst: JAV-Prüfung, Rentenberechnung, Ergebnis.
+9. Auf die Fallkarte **klicken** → Detailansicht mit dem kompletten Verlauf:
+   jeder Schritt mit Uhrzeit, Ergebnis, Konfidenz und Begründung, das
+   hochgeladene Gutachten zum Öffnen, die Fundstelle im Gutachtentext, der
+   Rechenweg der Rente und der Zustand des Temporal-Workflows.
+
+> **Warten Sie ruhig einmal ab, ohne etwas hochzuladen.** Nach 30 Sekunden
+> erscheint im Verlauf „1. Erinnerung versendet" – ausgelöst von einem
+> Temporal-Timer. Danach wartet der Fall einfach weiter. Sie können auch alle
+> Container neu starten: der Fall wartet danach an genau derselben Stelle
+> weiter, weil Temporal den Zustand hält.
 
 ---
 
@@ -112,22 +129,76 @@ Sie müssen dafür nichts einstellen.
 |---|---------|---------------|---------------|
 | 0 | Meldung | **dashboard-api** | Ihr Klick erzeugt ein **echtes Kafka-Event** auf dem Topic `unfall.gemeldet`. Die Weboberfläche ruft *keinen* Bearbeitungsdienst direkt auf. |
 | 1 | **Eingang** | **event-consumer** | Liest das Event von Kafka, speichert den Fall in **PostgreSQL** und informiert den Orchestrator, indem er einen **Temporal-Workflow** startet. |
-| 2 | **MdE-Ermittlung** | **mde-agent** | Ermittelt die *Minderung der Erwerbsfähigkeit* in Prozent, mit **Konfidenzwert** und kurzer **Begründung**. |
-| 3 | **JAV-Ermittlung** | **jav-agent** | Ermittelt den *Jahresarbeitsverdienst* in Euro, ebenfalls mit Konfidenz und Begründung. |
-| 4 | **Rentenberechnung** | **rentenberechnung** | **Kein Agent, keine Simulation.** Feste Rechenregel: `Rente/Jahr = 2/3 × JAV × (MdE / 100)`, `Rente/Monat = Rente/Jahr ÷ 12`. Formel und Ergebnis stehen in der Detailansicht. |
-| 5 | **Ergebnis** | **orchestrator** | Der Fall wird auf „Abgeschlossen" gesetzt. Der Rentenbetrag steht fest. |
+| 2 | **Gutachten** | **orchestrator** | Beauftragt die ärztliche Begutachtung – und **wartet**. Der Fall bleibt stehen, bis Sie ein Gutachten hochladen. Nach Fristablauf verschickt ein Temporal-Timer eine Erinnerung, danach wird weiter gewartet. |
+| 3 | **MdE-Ermittlung** | **mde-agent** | Liest die *Minderung der Erwerbsfähigkeit* **aus dem hochgeladenen Gutachten**, mit Konfidenzwert, Begründung und der Fundstelle im Text. Mit hinterlegtem Claude-Schlüssel wertet Claude das Dokument aus, sonst greift eine Textsuche. |
+| 4 | **Entgeltmeldung** | **orchestrator** | Fordert den Jahresverdienst bei Unternehmer und Versichertem an – und **wartet** erneut, mit derselben Erinnerungslogik. |
+| 5 | **JAV-Ermittlung** | **jav-agent** | Prüft die gemeldete Summe auf Plausibilität: Vergleich mit dem berufsüblichen Verdienst, Mindest- und Höchst-JAV. Liefert Konfidenz und Begründung. |
+| 6 | **Rentenberechnung** | **rentenberechnung** | **Kein Agent, keine Simulation.** Feste Rechenregel: `Rente/Jahr = 2/3 × JAV × (MdE / 100)`, `Rente/Monat = Rente/Jahr ÷ 12`. Formel und Ergebnis stehen in der Detailansicht. |
+| 7 | **Ergebnis** | **orchestrator** | Der Fall wird auf „Abgeschlossen" gesetzt. Der Rentenbetrag steht fest. |
+
+### Warum die Wartezeiten der interessanteste Teil sind
+
+Genau hier verdient sich Temporal seinen Platz. Zwischen „Gutachten beauftragt"
+und „Gutachten da" liegen in der Realität Wochen. Während dieser Zeit:
+
+* blockiert **kein** Prozess, **kein** Thread, **keine** Datenbankverbindung,
+* geht **kein** Zustand verloren – Sie dürfen alle Container neu starten,
+* läuft die **Frist** trotzdem weiter, und nach Ablauf verschickt ein Timer
+  automatisch eine Erinnerung,
+* wird der Fall **sofort** fortgesetzt, sobald das Dokument eintrifft
+  (technisch: ein *Signal* an den laufenden Workflow).
+
+Ohne so eine Engine müsste man das mit Statusspalten, Cronjobs und viel
+Fehlerbehandlung selbst bauen.
 
 ### Ehrlich gesagt: was ist echt, was ist simuliert?
 
-* **Echt:** Kafka als Message Broker, Temporal als Orchestrator, PostgreSQL als Speicher,
-  die getrennten Dienste, und die **Rentenformel**.
-* **Simuliert:** Die Werte von `mde-agent` und `jav-agent`. Sie werden aus den
-  Eingabedaten plausibel abgeleitet (Körperteil, Schweregrad, Beruf, Alter) und leicht
-  zufällig gestreut. Jeder Agent wartet zusätzlich 2,5–5 Sekunden, damit man im
-  Dashboard **zusehen** kann. In der Realität säßen hier ein KI-Agent bzw. eine
-  Anbindung an Gutachten- und Entgeltdaten.
+* **Echt:** Kafka als Message Broker, Temporal als Orchestrator (samt Signalen
+  und Timern), PostgreSQL als Speicher, die getrennten Dienste, das Hochladen
+  und Auslesen des Gutachtens, und die **Rentenformel**.
+* **Simuliert:** Der *Inhalt* des Beispiel-Gutachtens (frei erfundener Befund
+  mit plausiblem MdE-Wert) und die *Vergleichswerte je Beruf*, an denen der
+  `jav-agent` die gemeldete Summe misst. Die Agenten warten zusätzlich 2,5–5
+  Sekunden, damit man ihnen im Dashboard zusehen kann. Und die Fristen sind auf
+  30 Sekunden gestaucht statt auf Wochen.
+* **Nicht simuliert, aber vereinfacht:** Der `mde-agent` liest einen echten
+  Wert aus einem echten Dokument. Wie gut er das tut, hängt davon ab, ob ein
+  Claude-Schlüssel hinterlegt ist (siehe unten).
 
 Es geht in dieser Demo um den **Ablauf**, nicht um fachliche Korrektheit.
+
+---
+
+## 4b. Optional: Claude die MdE aus dem Gutachten lesen lassen
+
+**Ohne Schlüssel läuft alles.** Der `mde-agent` sucht dann im Gutachtentext
+nach Formulierungen wie „Die MdE beträgt 30 v. H." und übernimmt die Zahl.
+Für die Demo reicht das vollkommen.
+
+**Mit Schlüssel** liest Claude das Dokument inhaltlich: Es findet den Wert
+auch bei abweichender Formulierung, begründet ihn mit Bezug auf den Befund
+und meldet einen eigenen Konfidenzwert.
+
+So hinterlegen Sie den Schlüssel:
+
+```bash
+cp geheim.env.beispiel geheim.env
+nano geheim.env          # ANTHROPIC_API_KEY=sk-ant-... eintragen
+docker compose up -d --force-recreate mde-agent
+```
+
+Ob es greift, sehen Sie unten links im Dashboard („Der mde-agent liest das
+Gutachten mit …") und im Log: `mde-agent läuft auf Queue … (Extraktion: Claude)`.
+
+> **Der Schlüssel gehört ausschließlich in `geheim.env`.** Diese Datei steht in
+> der `.gitignore` und wird nie mitversioniert. Tragen Sie ihn **nicht** in die
+> `.env` ein – die liegt im Git. Schicken Sie einen Schlüssel auch nie per Chat
+> oder Ticket; wenn doch einmal einer abhandenkommt, in der
+> [Anthropic Console](https://console.anthropic.com/settings/keys) widerrufen.
+
+Kosten: Ein Gutachten ist etwa zwei Seiten Text, also ein sehr kleiner Aufruf.
+Die Extraktion läuft ausschließlich beim Hochladen eines Gutachtens – im
+Leerlauf entstehen keine Kosten.
 
 ---
 
@@ -159,8 +230,33 @@ Es geht in dieser Demo um den **Ablauf**, nicht um fachliche Korrektheit.
           │          │          │                               │     nacheinander
      ┌────┴────┐ ┌───┴─────┐ ┌──┴──────────────┐                │
      │mde-agent│ │jav-agent│ │rentenberechnung │ ◄──────────────┘
-     │ Agent   │ │ Agent   │ │ deterministisch │
+     │ liest   │ │ prüft   │ │ deterministisch │
+     │Gutachten│ │ Meldung │ │                 │
      └─────────┘ └─────────┘ └─────────────────┘
+```
+
+Und die beiden Wartepunkte, an denen der Workflow stehen bleibt, bis Sie
+etwas einreichen:
+
+```
+   Orchestrator                     Sie im Dashboard
+        │
+        │ Gutachten beauftragt
+        ▼
+   ┌──────────────┐
+   │   WARTET     │ ◄── Timer: nach 30 s „Erinnerung versendet", dann weiter warten
+   │              │
+   │              │ ◄────── Signal „gutachten_eingegangen"  ◄── PDF hochgeladen
+   └──────┬───────┘
+          │ weiter mit dem mde-agent
+          ▼
+   ┌──────────────┐
+   │   WARTET     │ ◄── Timer: dieselbe Erinnerungslogik
+   │              │
+   │              │ ◄────── Signal „entgeltmeldung_eingegangen" ◄── Betrag erfasst
+   └──────┬───────┘
+          │ weiter mit dem jav-agent
+          ▼
 ```
 
 ### Services und Ports
@@ -253,21 +349,46 @@ läuft echtes Temporal, es war kein Hindernis.
    Beruf `Dachdecker`, Körperteil `Bein`, Schweregrad `schwer`.
 5. Auf **„Unfall melden → Event auslösen"** klicken.
 6. Grüne Bestätigung lesen: Fallnummer + Kafka-Offset. → *Das Event liegt jetzt auf Kafka.*
-7. Rechts zusieht: Der Fall erscheint mit Status „Eingegangen", danach wandert die
-   gelbe Markierung durch **MdE-Ermittlung → JAV-Ermittlung → Rentenberechnung**.
-   Bereits erledigte Stufen werden grün.
-8. Nach ca. 10–15 Sekunden: Status **„Abgeschlossen"**, und in der Kachel stehen
-   MdE (%), JAV (€) und **Rente/Monat (€)**.
-9. Auf die Fallkarte klicken. In der Detailansicht prüfen:
-   * **Rechenweg (deterministisch)** – die Formel mit Ihren konkreten Zahlen.
-   * **Temporal-Workflow** – Workflow-ID, Status `COMPLETED`, erledigte Schritte 3/3.
-   * **Verarbeitungsverlauf** – jeder Schritt mit Uhrzeit, ausführender Komponente,
-     Konfidenzbalken und Begründung. „Rohdaten anzeigen" öffnet die Details.
-10. Zur Gegenprobe http://\<HOST_IP\>:28233 öffnen → Workflow `unfall-UV-…` anklicken →
-    dort sieht man dieselben Schritte als echte Temporal-Event-History.
-11. Gerne noch 2–3 weitere Fälle melden: gleiche Eingaben ergeben leicht
-    unterschiedliche MdE/JAV-Werte (die Agenten streuen), die **Rentenformel** rechnet
-    aber immer exakt gleich.
+7. Rechts erscheint der Fall. Die Stufen **Eingang** wird grün, dann bleibt er
+   bei **„Wartet auf Gutachten"** stehen (lila). Das ist der eingebaute
+   Wartepunkt – hier würde in echt der Gutachter arbeiten.
+8. **Jetzt einmal 30 Sekunden nichts tun.** Im Verlauf (Fallkarte anklicken)
+   erscheint „1. Erinnerung an die begutachtende Praxis versendet". Ausgelöst
+   hat das ein Temporal-Timer, nicht Sie. Der Fall wartet danach weiter.
+9. In der lila Box auf **„Beispiel-Gutachten als PDF herunterladen"** klicken.
+   Öffnen Sie das PDF ruhig – im Abschnitt 5 steht „Die Minderung der
+   Erwerbsfähigkeit (MdE) beträgt **XX** v. H.". Merken Sie sich die Zahl.
+10. Dieselbe Datei über **„Datei auswählen"** wählen und
+    **„Gutachten einreichen"** klicken.
+11. Der Fall läuft sofort weiter: **MdE** wird grün, und in der Kachel steht
+    genau die Zahl aus dem PDF. → *Der Agent hat sie wirklich aus dem
+    Dokument gelesen.*
+12. Nächster Wartepunkt: **„Wartet auf Entgeltmeldung"**. Tragen Sie
+    z. B. `52000` ein und klicken **„Meldung erfassen"** – oder klicken Sie
+    **„Antwort simulieren"**.
+13. Der Rest läuft von selbst durch. Nach wenigen Sekunden: **„Abgeschlossen"**
+    mit MdE (%), JAV (€) und **Rente/Monat (€)**.
+14. Auf die Fallkarte klicken. In der Detailansicht prüfen:
+    * **Eingegangene Dokumente** – Ihr hochgeladenes Gutachten, anklickbar.
+    * **Rechenweg (deterministisch)** – die Formel mit Ihren konkreten Zahlen.
+    * **Temporal-Workflow** – Status `COMPLETED`, erledigte Schritte 5/5,
+      Anzahl der Erinnerungen.
+    * **Verarbeitungsverlauf** – jeder Schritt mit Uhrzeit, Komponente,
+      Konfidenzbalken, Begründung und der **Fundstelle im Gutachten**.
+15. Zur Gegenprobe http://\<HOST_IP\>:28233 öffnen → Workflow `unfall-UV-…`
+    anklicken → dort sieht man dieselben Schritte als echte Temporal-Event-History,
+    inklusive der Timer und der beiden Signale.
+
+**Die eindrucksvollste Probe:** Melden Sie einen Unfall, warten Sie bis
+„Wartet auf Gutachten", und stoppen Sie dann **alles**:
+
+```bash
+docker compose down          # ohne -v, sonst sind die Daten weg
+docker compose up -d
+```
+
+Der Fall steht danach unverändert auf „Wartet auf Gutachten" – laden Sie das
+Gutachten hoch, und er läuft weiter, als wäre nichts gewesen.
 
 ## 9. Beenden und aufräumen
 
@@ -283,6 +404,7 @@ docker compose down -v
 
 ```
 .env                                   IP-Adresse und Ports (hier anpassen)
+geheim.env.beispiel                    Vorlage für den Claude-API-Schlüssel
 docker-compose.yml                     alle Services, Ports, Startreihenfolge
 config/dynamicconfig/                  Einstellungen für den Temporal-Server
 services/app/
@@ -290,8 +412,9 @@ services/app/
   consumer/main.py                     Eingang: Kafka lesen → speichern → Workflow starten
   orchestrator/workflow.py             ► die Reihenfolge der Schritte (Temporal-Workflow)
   orchestrator/worker.py               Statuswechsel + Abschluss
-  agenten/mde_agent.py                 MdE-Ermittlung   (simuliert)
-  agenten/jav_agent.py                 JAV-Ermittlung   (simuliert)
+  agenten/mde_agent.py                 MdE aus dem Gutachten lesen
+  agenten/jav_agent.py                 gemeldeten JAV plausibilisieren
+  common/gutachten.py                  ► Beispiel-PDF, Textextraktion, Claude
   agenten/rentenberechnung.py          ► die Rentenformel (deterministisch)
   common/db.py                         Datenbankzugriff + Tabellen
   static/index.html · app.js · stil.css  die Weboberfläche
@@ -301,6 +424,14 @@ Die zwei fachlich interessantesten Dateien sind mit ► markiert.
 
 ## 11. Wenn etwas klemmt
 
+* **„Der Fall wartet und wartet"** – das ist so gewollt. Der Workflow bleibt bei
+  „Wartet auf Gutachten" bzw. „Wartet auf Entgeltmeldung" stehen, bis Sie in der
+  lila Box etwas einreichen. Nach 30 Sekunden erscheint eine Erinnerung im
+  Verlauf, danach wartet er weiter. Die Frist lässt sich in der `.env` über
+  `FRIST_GUTACHTEN_SEKUNDEN` ändern.
+* **Der Upload wird mit „Dieser Fall wartet gerade nicht auf ein Gutachten"
+  abgelehnt**: Der Fall ist über diesen Schritt schon hinaus. Ein Gutachten
+  lässt sich nur einreichen, solange der Fall auch darauf wartet.
 * **`Unable to create dynamic config client`** und der Temporal-Container
   startet immer wieder neu: Die Datei `config/dynamicconfig/development-sql.yaml`
   fehlt oder wird nicht hineingemountet. Sie gehört zum Projekt und muss

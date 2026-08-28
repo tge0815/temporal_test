@@ -19,10 +19,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("orchestrator")
 
 SCHRITT_TEXTE = {
+    "WARTE_AUF_GUTACHTEN": ("Gutachten", "Orchestrator wartet auf das Gutachten"),
     "MDE_ERMITTLUNG": ("MdE-Ermittlung", "Orchestrator übergibt an mde-agent"),
+    "WARTE_AUF_ENTGELTMELDUNG": ("Entgeltmeldung",
+                                 "Orchestrator wartet auf die Entgeltmeldung"),
     "JAV_ERMITTLUNG": ("JAV-Ermittlung", "Orchestrator übergibt an jav-agent"),
     "RENTENBERECHNUNG": ("Rentenberechnung",
                          "Orchestrator übergibt an rentenberechnung (deterministisch)"),
+}
+
+VORGANG_TEXTE = {
+    "gutachten": ("Gutachten", "Gutachten"),
+    "entgeltmeldung": ("Entgeltmeldung", "Entgeltmeldung"),
 }
 
 
@@ -36,6 +44,53 @@ async def status_setzen(fall_id: str, status: str) -> None:
          "temporal_activity": activity.info().activity_type},
     )
     log.info("Fall %s -> %s", fall_id, status)
+
+
+@activity.defn(name="gutachten_beauftragen")
+async def gutachten_beauftragen(fall_id: str) -> None:
+    """Beauftragt die Begutachtung. Ab hier wartet der Workflow."""
+    fall = await db.fall_lesen(fall_id)
+    await db.verlauf_schreiben(
+        fall_id, "Gutachten", "orchestrator (Temporal)", "WARTET",
+        "Gutachtenauftrag an die ärztliche Praxis versendet. Der Workflow "
+        "wartet jetzt auf das Gutachten – im Dashboard hochladen.",
+        {"empfaenger": "Fachärztliche Praxis",
+         "koerperteil": (fall or {}).get("koerperteil"),
+         "frist_sekunden": config.FRIST_GUTACHTEN,
+         "hinweis": "Temporal hält den Fall an dieser Stelle fest. Das Warten "
+                    "kostet keine Rechenzeit und übersteht einen Neustart."},
+    )
+    log.info("Fall %s: Gutachten beauftragt, warte auf Eingang", fall_id)
+
+
+@activity.defn(name="entgeltmeldung_anfordern")
+async def entgeltmeldung_anfordern(fall_id: str) -> None:
+    """Fordert die Entgeltmeldung an. Ab hier wartet der Workflow erneut."""
+    fall = await db.fall_lesen(fall_id)
+    await db.verlauf_schreiben(
+        fall_id, "Entgeltmeldung", "orchestrator (Temporal)", "WARTET",
+        "Anfrage zum Jahresarbeitsverdienst an Unternehmer und Versicherten "
+        "versendet. Der Workflow wartet auf die Antwort.",
+        {"empfaenger": ["Unternehmer", "Versicherte Person"],
+         "versicherter": (fall or {}).get("versicherter"),
+         "frist_sekunden": config.FRIST_ENTGELTMELDUNG},
+    )
+    log.info("Fall %s: Entgeltmeldung angefordert, warte auf Eingang", fall_id)
+
+
+@activity.defn(name="erinnerung_versenden")
+async def erinnerung_versenden(fall_id: str, vorgang: str, empfaenger: str,
+                               nummer: int) -> None:
+    """Läuft die Frist ab, ohne dass etwas eingeht: erinnern und weiter warten."""
+    schritt, betreff = VORGANG_TEXTE.get(vorgang, (vorgang, vorgang))
+    await db.verlauf_schreiben(
+        fall_id, schritt, "orchestrator (Temporal)", "ERINNERUNG",
+        f"{nummer}. Erinnerung an {empfaenger} versendet – {betreff} steht "
+        f"weiterhin aus. Der Workflow wartet weiter.",
+        {"vorgang": vorgang, "erinnerung_nummer": nummer,
+         "ausgeloest_durch": "Temporal-Timer"},
+    )
+    log.info("Fall %s: %s. Erinnerung zu '%s' versendet", fall_id, nummer, vorgang)
 
 
 @activity.defn(name="fall_abschliessen")
@@ -59,7 +114,9 @@ async def main() -> None:
         client,
         task_queue=config.QUEUE_ORCHESTRATOR,
         workflows=[UnfallSachbearbeitungWorkflow],
-        activities=[status_setzen, fall_abschliessen],
+        activities=[status_setzen, gutachten_beauftragen,
+                    entgeltmeldung_anfordern, erinnerung_versenden,
+                    fall_abschliessen],
     )
     log.info("Orchestrator-Worker laeuft auf Queue '%s'", config.QUEUE_ORCHESTRATOR)
     await worker.run()
