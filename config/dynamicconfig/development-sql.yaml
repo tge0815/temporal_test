@@ -1,0 +1,18 @@
+# Dynamische Konfiguration des Temporal-Servers.
+#
+# Diese Datei wird in den Temporal-Container gemountet (siehe docker-compose.yml).
+# Sie MUSS vorhanden sein: ist der in DYNAMIC_CONFIG_FILE_PATH angegebene Pfad
+# leer, startet der Server nicht, sondern beendet sich mit
+# "Unable to create dynamic config client".
+#
+# Der Inhalt entspricht der Entwicklungs-Voreinstellung von Temporal.
+
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+
+# Nur fuer Entwicklung/Demo: Suchattribute werden sofort statt verzoegert
+# aktualisiert, damit neue Workflows unmittelbar in der Oberflaeche auftauchen.
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}

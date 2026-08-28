@@ -272,6 +272,7 @@ docker compose down -v
 ```
 .env                                   IP-Adresse und Ports (hier anpassen)
 docker-compose.yml                     alle Services, Ports, Startreihenfolge
+config/dynamicconfig/                  Einstellungen für den Temporal-Server
 services/app/
   api/main.py                          Dashboard-API + Kafka-Producer
   consumer/main.py                     Eingang: Kafka lesen → speichern → Workflow starten
@@ -288,6 +289,16 @@ Die zwei fachlich interessantesten Dateien sind mit ► markiert.
 
 ## 11. Wenn etwas klemmt
 
+* **`Unable to create dynamic config client`** und der Temporal-Container
+  startet immer wieder neu: Die Datei `config/dynamicconfig/development-sql.yaml`
+  fehlt oder wird nicht hineingemountet. Sie gehört zum Projekt und muss
+  vorhanden sein – prüfen mit `ls config/dynamicconfig/`. Fehlt sie, hilft
+  ein `git pull`.
+* **Alle Dienste melden `Warte auf Temporal … Name or service not known`**:
+  Der Temporal-Container läuft nicht. Der Hostname `temporal` existiert im
+  Docker-Netz nur, solange der Container läuft. Nachsehen mit
+  `docker compose ps -a` und `docker compose logs temporal --tail=50` – die
+  Ursache steht immer in den letzten Zeilen dieses Logs.
 * **`pull access denied for unfall-mvp-app`**: Docker versucht, das Image der
   Anwendung herunterzuladen, statt es zu bauen. Es gibt dieses Image in keiner
   Registry – es entsteht erst beim Start aus `services/app/Dockerfile`. In der

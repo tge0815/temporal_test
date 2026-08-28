@@ -47,6 +47,7 @@ services:
       - "${POSTGRES_PORT:-25432}:5432"
     volumes:
       - postgres-daten:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -82,6 +83,7 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
       CLUSTER_ID: 5L6g3nShT-eMCtK--X86sw
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
       interval: 10s
@@ -104,9 +106,15 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PWD: postgres
       POSTGRES_SEEDS: postgres
-      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+      # Diese Datei ist NICHT im Image enthalten - sie wird unten aus dem
+      # Projektordner hineingemountet. Zeigt der Pfad ins Leere, startet
+      # der Server nicht ("Unable to create dynamic config client").
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/development-sql.yaml
+    volumes:
+      - ./config/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     ports:
       - "${TEMPORAL_PORT:-27233}:7233"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "temporal operator cluster health --address temporal:7233 || exit 1"]
       interval: 10s
