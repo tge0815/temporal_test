@@ -288,6 +288,12 @@ Die zwei fachlich interessantesten Dateien sind mit ► markiert.
 
 ## 11. Wenn etwas klemmt
 
+* **`pull access denied for unfall-mvp-app`**: Docker versucht, das Image der
+  Anwendung herunterzuladen, statt es zu bauen. Es gibt dieses Image in keiner
+  Registry – es entsteht erst beim Start aus `services/app/Dockerfile`. In der
+  `docker-compose.yml` ist dafür `pull_policy: build` gesetzt. Bei einer
+  älteren Compose-Version, die das ignoriert, hilft:
+  `docker compose up --build`.
 * **Port belegt** (`address already in use`): In der Datei `.env` den betroffenen
   Port auf eine freie Zahl ändern (z. B. `DASHBOARD_PORT=28081`), dann
   `docker compose up -d` erneut ausführen.
