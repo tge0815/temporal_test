@@ -62,8 +62,8 @@ docker compose up
 ### Später aktualisieren
 
 ```bash
-./update.sh                  # neuesten Stand holen, Container neu bauen und starten
-./update.sh <branch>         # dasselbe, aber auf einen anderen Branch wechseln
+./update.sh                  # auf main wechseln, neuesten Stand holen, Container neu bauen und starten
+./update.sh <branch>         # dasselbe mit einem anderen Branch
 ```
 
 Das Skript sichert vorher Ihre `.env`, holt den neuen Stand, stellt die `.env`

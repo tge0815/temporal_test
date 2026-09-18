@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Holt den neuesten Stand und startet die Container neu.
 #
-#   ./update.sh                 aktuellen Branch aktualisieren
+#   ./update.sh                 auf main wechseln und aktualisieren
 #   ./update.sh <branch>        auf einen anderen Branch wechseln und aktualisieren
 #
 # Die eigene .env (mit HOST_IP und Ports) bleibt dabei erhalten - auch beim
@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-BRANCH="${1:-$(git rev-parse --abbrev-ref HEAD)}"
+BRANCH="${1:-main}"
 
 echo "==> Eigene Einstellungen sichern"
 if [ -f .env ]; then
