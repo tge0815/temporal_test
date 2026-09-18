@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spielwiese – Mail rein, Ticket raus</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📬</text></svg>">
+<style>
+  :root { --bg:#0f1420; --karte:#182031; --karte2:#1f2940; --rand:#2b3752; --text:#e8edf7; --gedimmt:#9aa8c4;
+          --akzent:#4f8cff; --gruen:#35c98a; --gelb:#f2b544; --rot:#ef5f6b; --lila:#a78bfa; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); font-size:15px; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; padding:14px 24px;
+           background:linear-gradient(90deg,#16203a,#101728); border-bottom:1px solid var(--rand); }
+  header h1 { font-size:18px; margin:0; } .untertitel { margin:2px 0 0; color:var(--gedimmt); font-size:13px; }
+  header a { color:var(--akzent); text-decoration:none; font-size:14px; margin-left:14px; }
+  main { display:grid; grid-template-columns:360px 1fr 1fr; gap:20px; padding:20px; align-items:start; }
+  @media (max-width:1100px) { main { grid-template-columns:1fr; } }
+  .karte { background:var(--karte); border:1px solid var(--rand); border-radius:14px; padding:18px; }
+  .karte h2 { margin:0 0 6px; font-size:16px; }
+  .hilfe { color:var(--gedimmt); font-size:13px; line-height:1.5; }
+  code { background:#0b0f18; padding:1px 6px; border-radius:4px; color:#8fd3ff; font-size:.9em; }
+  form { display:flex; flex-direction:column; gap:10px; margin-top:12px; }
+  label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--gedimmt); }
+  input, textarea, select { background:#0d1320; border:1px solid var(--rand); color:var(--text); border-radius:8px; padding:9px 10px; font-size:14px; font-family:inherit; }
+  button { background:var(--akzent); color:#fff; border:0; border-radius:9px; padding:11px; font-size:15px; font-weight:600; cursor:pointer; }
+  button.sekundaer { background:#2c3756; color:var(--text); font-size:13px; padding:7px 11px; }
+  .meldung { font-size:13px; min-height:18px; } .meldung.ok { color:var(--gruen); } .meldung.fehler { color:var(--rot); }
+  .liste { display:flex; flex-direction:column; gap:10px; margin-top:12px; }
+  .eintrag { background:var(--karte2); border:1px solid var(--rand); border-radius:10px; padding:11px 13px; font-size:13.5px; }
+  .eintrag .kopf { display:flex; justify-content:space-between; gap:10px; align-items:baseline; }
+  .eintrag b { font-size:14px; } .meta { color:var(--gedimmt); font-size:12px; }
+  .eintrag p { margin:6px 0 0; white-space:pre-wrap; color:var(--text); line-height:1.45; }
+  .pill { padding:2px 9px; border-radius:999px; font-size:11.5px; font-weight:600; white-space:nowrap; }
+  .pill-gruen { background:rgba(53,201,138,.16); color:var(--gruen); } .pill-grau { background:#2a3450; color:var(--gedimmt); }
+  .pill-lila { background:rgba(167,139,250,.18); color:var(--lila); }
+  .vorlagen { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+  .schritte { margin:12px 0 0; padding-left:20px; font-size:13px; color:var(--gedimmt); line-height:1.8; }
+  .schritte b { color:var(--text); }
+  details { margin-top:6px; } summary { cursor:pointer; font-size:12px; color:var(--gedimmt); }
+  pre { background:#0b0f18; border-radius:8px; padding:10px; font-size:11.5px; overflow:auto; color:#9fc4ef; margin:6px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Spielwiese – Mail rein, Ticket raus</h1>
+    <p class="untertitel">Lokaler Mailserver + Jira-Stub. Dazwischen macht n8n die Arbeit.</p>
+  </div>
+  <div>
+    <a id="n8n-link" href="#" target="_blank" rel="noopener">n8n öffnen ↗</a>
+    <a href="http://localhost:28080" id="dashboard-link">Unfall-Dashboard ↗</a>
+  </div>
+</header>
+
+<main>
+  <section class="karte">
+    <h2>1 · Mail schicken</h2>
+    <p class="hilfe">Landet im Posteingang <code id="adresse">…</code> des lokalen Mailservers.
+      n8n wartet dort per IMAP darauf.</p>
+    <form id="mail-form">
+      <label>Von<input name="von" value="kunde@example.com"></label>
+      <label>Betreff<input name="betreff" value="Rechnung 4711 fehlerhaft"></label>
+      <label>Text<textarea name="text" rows="6">Hallo,
+
+auf der Rechnung 4711 vom 3.9. ist die Position "Montage" doppelt berechnet. Bitte korrigieren und eine neue Rechnung schicken. Es eilt, die Zahlung ist nächste Woche fällig.
+
+Mit freundlichen Grüßen
+Petra Beispiel</textarea></label>
+      <div class="vorlagen">
+        <button type="button" class="sekundaer" data-vorlage="beschwerde">Beschwerde</button>
+        <button type="button" class="sekundaer" data-vorlage="frage">Harmlose Frage</button>
+        <button type="button" class="sekundaer" data-vorlage="spam">Spam</button>
+      </div>
+      <button type="submit">Mail senden → Ereignis auslösen</button>
+      <div id="mail-meldung" class="meldung"></div>
+    </form>
+    <ol class="schritte">
+      <li><b>n8n</b> holt die Mail per IMAP-Trigger ab</li>
+      <li>ein <b>Agent</b> liest sie und entscheidet: Ticket ja/nein, Priorität, Titel</li>
+      <li>bei „ja“ ein <b>HTTP-Request</b> an den Jira-Stub rechts</li>
+    </ol>
+    <p class="hilfe">Workflow-Vorlage zum Importieren in n8n: <code>doku/n8n-mail-zu-jira.json</code></p>
+  </section>
+
+  <section class="karte">
+    <h2>2 · Posteingang <span class="meta" id="mail-anzahl"></span></h2>
+    <p class="hilfe">Per IMAP gelesen, dieselbe Schnittstelle wie n8n. „gelesen“ heißt: n8n hat die Mail schon abgeholt.</p>
+    <div class="liste" id="posteingang"></div>
+  </section>
+
+  <section class="karte">
+    <h2>3 · Jira-Stub <span class="meta" id="ticket-anzahl"></span></h2>
+    <p class="hilfe">Nimmt <code>POST /jira/rest/api/2/issue</code> an wie ein echtes Jira und antwortet mit einer Ticketnummer.
+      Sonstige Aufrufe aus n8n: <code>POST /webhook/&lt;name&gt;</code> erscheint unten.</p>
+    <div class="liste" id="tickets"></div>
+    <div class="liste" id="webhooks"></div>
+  </section>
+</main>
+
+<script>
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const uhr = (iso) => iso ? new Date(iso).toLocaleTimeString("de-DE", { hour12:false }) : "";
+const VORLAGEN = {
+  beschwerde: ["kunde@example.com", "Rechnung 4711 fehlerhaft",
+    "Hallo,\n\nauf der Rechnung 4711 vom 3.9. ist die Position \"Montage\" doppelt berechnet. Bitte korrigieren und eine neue Rechnung schicken. Es eilt, die Zahlung ist nächste Woche fällig.\n\nMit freundlichen Grüßen\nPetra Beispiel"],
+  frage: ["info@example.org", "Öffnungszeiten am Freitag?",
+    "Guten Tag,\n\nhaben Sie am Freitag vor dem Feiertag ganz normal geöffnet?\n\nDanke und Gruß\nK. Müller"],
+  spam: ["win@lottery-prize.biz", "CONGRATULATIONS you have won",
+    "Dear friend, you have been selected to receive 1.000.000 EUR. Click here now!!!"],
+};
+let signaturen = {};
+
+async function start() {
+  const info = await (await fetch("/api/info")).json();
+  document.getElementById("adresse").textContent = info.mail_adresse;
+  document.getElementById("n8n-link").href = `${location.protocol}//${location.hostname}:${info.n8n_port}`;
+  document.getElementById("dashboard-link").href = `${location.protocol}//${location.hostname}:28080`;
+  document.getElementById("mail-form").addEventListener("submit", senden);
+  document.querySelectorAll("[data-vorlage]").forEach((b) => b.onclick = () => {
+    const [von, betreff, text] = VORLAGEN[b.dataset.vorlage];
+    const f = document.getElementById("mail-form");
+    f.von.value = von; f.betreff.value = betreff; f.text.value = text;
+  });
+  tick(); setInterval(tick, 2000);
+}
+
+async function senden(e) {
+  e.preventDefault();
+  const m = document.getElementById("mail-meldung");
+  const daten = Object.fromEntries(new FormData(e.target).entries());
+  m.className = "meldung"; m.textContent = "Sende …";
+  try {
+    const a = await fetch("/api/mail", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(daten) });
+    if (!a.ok) throw new Error((await a.json()).detail || a.status);
+    m.className = "meldung ok"; m.textContent = "✓ " + (await a.json()).hinweis;
+    tick();
+  } catch (err) { m.className = "meldung fehler"; m.textContent = "Fehler: " + err.message; }
+}
+
+async function tick() {
+  const [mails, tickets, hooks] = await Promise.all([
+    fetch("/api/posteingang").then((r) => r.ok ? r.json() : r.json().then((f) => ({ fehler: f.detail }))).catch(() => ({ fehler: "nicht erreichbar" })),
+    fetch("/api/tickets").then((r) => r.json()).catch(() => []),
+    fetch("/api/webhooks").then((r) => r.json()).catch(() => []),
+  ]);
+  zeichne("posteingang", mails, (m) => `
+    <div class="eintrag"><div class="kopf"><b>${esc(m.betreff)}</b>
+      <span class="pill ${m.gelesen ? "pill-gruen" : "pill-grau"}">${m.gelesen ? "von n8n abgeholt" : "neu"}</span></div>
+      <div class="meta">${esc(m.von)} · ${esc(m.datum)}</div><p>${esc(m.text)}</p></div>`,
+    "Noch keine Mail. Links eine schicken.");
+  document.getElementById("mail-anzahl").textContent = Array.isArray(mails) ? `(${mails.length})` : "";
+  zeichne("tickets", tickets, (t) => `
+    <div class="eintrag"><div class="kopf"><b>${esc(t.key)} · ${esc(t.summary)}</b>
+      ${t.priority ? `<span class="pill pill-lila">${esc(t.priority)}</span>` : ""}</div>
+      <div class="meta">${uhr(t.erstellt_am)}${t.labels?.length ? " · " + esc(t.labels.join(", ")) : ""}</div>
+      <p>${esc(t.description)}</p>
+      <details><summary>Rohdaten (was n8n geschickt hat)</summary><pre>${esc(JSON.stringify(t.roh, null, 2))}</pre></details></div>`,
+    "Noch kein Ticket. Kommt, sobald n8n eines anlegt.");
+  document.getElementById("ticket-anzahl").textContent = `(${tickets.length})`;
+  zeichne("webhooks", hooks, (h) => `
+    <div class="eintrag"><div class="kopf"><b>Webhook „${esc(h.name)}“</b><span class="meta">${uhr(h.zeitpunkt)}</span></div>
+      <pre>${esc(typeof h.nutzlast === "string" ? h.nutzlast : JSON.stringify(h.nutzlast, null, 2))}</pre></div>`, "");
+}
+
+function zeichne(id, daten, vorlage, leer) {
+  const el = document.getElementById(id);
+  const sig = JSON.stringify(daten);
+  if (signaturen[id] === sig) return;
+  signaturen[id] = sig;
+  if (daten && daten.fehler) { el.innerHTML = `<p class="hilfe" style="color:var(--rot)">${esc(daten.fehler)}</p>`; return; }
+  el.innerHTML = daten.length ? daten.map(vorlage).join("") : (leer ? `<p class="hilfe">${leer}</p>` : "");
+}
+start();
+</script>
+</body>
+</html>

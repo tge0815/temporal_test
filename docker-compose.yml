@@ -256,5 +256,66 @@ services:
       temporal:
         condition: service_started
 
+  # =====================================================================
+  # SPIELWIESE: "Mail kommt -> Agent -> Jira-Ticket" mit n8n
+  #
+  # Zeigt, dass Workflow-Automation mit Agent-Knoten ein fertiges,
+  # kostenloses Werkzeug ist. Alles lokal: Mailserver, Jira-Stub, n8n.
+  # =====================================================================
+
+  # n8n: Workflow-Automation mit Canvas, Trigger, Agent-Knoten.
+  # ->  http://<HOST_IP>:<N8N_PORT>   (beim ersten Aufruf Konto anlegen)
+  n8n:
+    image: n8nio/n8n:1.112.6
+    container_name: uv-n8n
+    ports:
+      - "${N8N_PORT:-25678}:5678"
+    environment:
+      N8N_HOST: "${HOST_IP:-localhost}"
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: "http://${HOST_IP:-localhost}:${N8N_PORT:-25678}/"
+      # Ohne HTTPS muss das Cookie unsicher sein, sonst geht die Anmeldung nicht.
+      N8N_SECURE_COOKIE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      GENERIC_TIMEZONE: Europe/Berlin
+      TZ: Europe/Berlin
+    volumes:
+      - n8n-daten:/home/node/.n8n
+    restart: unless-stopped
+
+  # Lokaler Mailserver (SMTP + IMAP), Anmeldung mit beliebigem Passwort.
+  greenmail:
+    image: greenmail/standalone:2.1.13
+    container_name: uv-greenmail
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap
+        -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled
+        -Dgreenmail.users=demo:demo@spielwiese.local
+    restart: unless-stopped
+
+  # Seite zum Mailschicken + Posteingang + Jira-Stub
+  # ->  http://<HOST_IP>:<SPIELWIESE_PORT>
+  spielwiese:
+    <<: *app
+    container_name: uv-spielwiese
+    command: uvicorn spielwiese.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "${SPIELWIESE_PORT:-28090}:8080"
+    environment:
+      MAIL_HOST: greenmail
+      MAIL_SMTP_PORT: "3025"
+      MAIL_IMAP_PORT: "3143"
+      MAIL_USER: demo
+      MAIL_PASS: demo
+      MAIL_ADRESSE: demo@spielwiese.local
+      N8N_PORT: "${N8N_PORT:-25678}"
+      PYTHONPATH: /app
+    depends_on:
+      - greenmail
+
 volumes:
   postgres-daten:
+  n8n-daten:

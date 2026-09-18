@@ -1,0 +1,213 @@
+{
+  "name": "Spielwiese: Mail → Agent → Jira-Ticket",
+  "nodes": [
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "options": {
+          "forceReconnect": 60
+        }
+      },
+      "name": "Mail kommt (IMAP)",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "imap": {
+          "id": "",
+          "name": "GreenMail (IMAP)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Du bist der Posteingang einer Firma. Entscheide, ob aus dieser Mail ein Ticket für die Sachbearbeitung werden muss.\n\nRegeln:\n- Reklamationen, Fehler, Zahlungs- oder Vertragsfragen: ticket = true\n- Allgemeine Fragen, die eine Standardantwort bekommen können: ticket = false\n- Spam und Werbung: ticket = false\n- prioritaet: \"Hoch\" bei Frist oder Geld, sonst \"Mittel\" oder \"Niedrig\"\n\nVon: {{ $json.from }}\nBetreff: {{ $json.subject }}\n\n{{ $json.textPlain || $json.textHtml }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Antworte ausschließlich mit dem geforderten JSON."
+        }
+      },
+      "name": "Agent: Ticket nötig?",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-5"
+        },
+        "options": {}
+      },
+      "name": "Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        200,
+        220
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"ticket\": true,\n  \"prioritaet\": \"Hoch\",\n  \"titel\": \"Rechnung 4711: Position Montage doppelt berechnet\",\n  \"zusammenfassung\": \"Kundin meldet doppelte Position auf Rechnung 4711 und bittet um Korrektur. Zahlung nächste Woche fällig.\",\n  \"begruendung\": \"Konkrete Reklamation mit Handlungsbedarf und Frist.\"\n}"
+      },
+      "name": "Ausgabeschema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        420,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ticket",
+              "leftValue": "={{ $json.output.ticket }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Ticket?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://spielwiese:8080/jira/rest/api/2/issue",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { summary: $json.output.titel, description: $json.output.zusammenfassung + '\\n\\nBegründung des Agenten: ' + $json.output.begruendung + '\\n\\nOriginal von ' + $('Mail kommt (IMAP)').item.json.from, priority: { name: $json.output.prioritaet }, labels: ['aus-mail', 'agent'] } }) }}",
+        "options": {}
+      },
+      "name": "Jira-Ticket anlegen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://spielwiese:8080/webhook/kein-ticket",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ betreff: $('Mail kommt (IMAP)').item.json.subject, entscheidung: $json.output }) }}",
+        "options": {}
+      },
+      "name": "Nur protokollieren",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Mail kommt (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Agent: Ticket nötig?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agent: Ticket nötig?",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ausgabeschema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Agent: Ticket nötig?",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent: Ticket nötig?": {
+      "main": [
+        [
+          {
+            "node": "Ticket?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket?": {
+      "main": [
+        [
+          {
+            "node": "Jira-Ticket anlegen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nur protokollieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

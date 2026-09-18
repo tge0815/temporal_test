@@ -94,6 +94,8 @@ Setzen Sie für `<HOST_IP>` die IP ein, die Sie in die `.env` eingetragen haben
 | --- | --- |
 | **Dashboard – hier klicken Sie** | **http://\<HOST_IP\>:28080** |
 | **Prozessdesigner** – den Ablauf selbst zusammenstecken (Abschnitt 4c) | http://\<HOST_IP\>:28080/designer |
+| **Spielwiese** – „Mail kommt → Agent → Jira-Ticket" mit n8n (Abschnitt 4d) | http://\<HOST_IP\>:28090 |
+| n8n – Workflow-Automation, fertig und kostenlos | http://\<HOST_IP\>:25678 |
 | Temporal-Oberfläche (der Blick „unter die Motorhaube") | http://\<HOST_IP\>:28233 |
 
 Alles Weitere passiert auf **http://\<HOST_IP\>:28080**.
@@ -298,6 +300,69 @@ gemeldet; der Interpreter bricht nach 200 Schritten ab.
 
 ---
 
+## 4d. Spielwiese: „Mail kommt → Agent → Jira-Ticket" mit n8n
+
+Der Prozessdesigner oben zeigt, wie man so etwas *baut*. Die Spielwiese zeigt,
+dass man es nicht bauen muss: **n8n** ist ein fertiges Werkzeug genau dieser
+Art, mit Canvas, Trigger-Knoten, Agent-Knoten und einigen hundert Konnektoren.
+Es läuft hier als Container mit, dazu ein lokaler Mailserver und ein
+Jira-Stub, damit der Flow ohne Firmenzugänge durchläuft.
+
+| Was | Adresse | Aufgabe |
+|---|---|---|
+| Spielwiese | http://\<HOST_IP\>:28090 | Mail schicken, Posteingang ansehen, Jira-Tickets ansehen |
+| n8n | http://\<HOST_IP\>:25678 | der Workflow: IMAP-Trigger → Agent → HTTP-Request |
+| GreenMail | nur intern (`greenmail:3025` SMTP, `greenmail:3143` IMAP) | lokaler Mailserver, Postfach `demo@spielwiese.local` |
+
+### Einrichten (einmalig, etwa zehn Minuten)
+
+1. http://\<HOST_IP\>:25678 öffnen, beim ersten Aufruf ein n8n-Konto anlegen
+   (bleibt lokal auf der VM).
+2. Zwei **Credentials** anlegen (Menü links → Credentials → Add):
+   * **IMAP**: Host `greenmail`, Port `3143`, User `demo`, Passwort `demo`,
+     SSL/TLS **aus**, „Allow Self-Signed Certificates" an.
+   * **Anthropic**: den API-Schlüssel aus `geheim.env`.
+3. Workflow importieren: Add workflow → Menü „…" → **Import from File** →
+   `doku/n8n-mail-zu-jira.json`. Nach dem Import in den Knoten „Mail kommt
+   (IMAP)" und „Claude" jeweils die eben angelegten Credentials auswählen, im
+   Knoten „Claude" ein Modell wählen.
+4. Oben rechts den Workflow auf **Active** stellen.
+
+> Meldet n8n beim Import eine unbekannte Knotenversion, ist die Vorlage älter
+> als Ihr n8n. Der Flow ist in fünf Minuten von Hand nachgebaut:
+> **Email Trigger (IMAP)** → **AI Agent** (mit *Anthropic Chat Model* und
+> *Structured Output Parser*, Ausgabe: `ticket`, `prioritaet`, `titel`,
+> `zusammenfassung`) → **If** (`{{ $json.output.ticket }}` ist true) →
+> **HTTP Request** POST auf `http://spielwiese:8080/jira/rest/api/2/issue`
+> mit Body `{"fields": {"summary": …, "description": …}}`.
+
+### Vorführen
+
+1. Spielwiese öffnen, links eine der Vorlagen wählen („Beschwerde", „Harmlose
+   Frage", „Spam") und **Mail senden**.
+2. Mitte: die Mail liegt im Posteingang, erst „neu", nach dem nächsten
+   IMAP-Poll von n8n (Standard: jede Minute) „von n8n abgeholt".
+3. Rechts: bei der Beschwerde erscheint ein Ticket `DEMO-1` mit Titel,
+   Priorität und Begründung des Agenten. Bei Frage und Spam erscheint statt
+   des Tickets nur ein Protokolleintrag „kein-ticket" mit der Entscheidung.
+4. In n8n unter **Executions** jeden Lauf anklicken: Eingabe und Ausgabe
+   jedes Knotens, auch die Antwort des Agenten.
+
+### Was daran zu lernen ist
+
+* Das Werkzeug ist nicht neu und nicht das Besondere. Trigger, Bedingung,
+  Aktion gibt es seit über zehn Jahren; der Agent-Knoten kam 2024 dazu.
+* Der wertvolle Teil eines Anbieters sind die **Konnektoren**, nicht der
+  Canvas. Drei Konnektoren sind ein Nachmittag, der sechzigste ist ein Team.
+* n8n hat **keine** Wartepunkte über Wochen, keine Historie, kein
+  deterministisches Nachspielen. Genau dafür läuft nebenan Temporal. Beides
+  zusammen ist die ehrliche Antwort: n8n für „Mail rein, Ticket raus",
+  Temporal für Fälle, die Monate leben.
+* n8n ist „fair-code": intern selbst hosten ist erlaubt, als Produkt an
+  Dritte verkaufen nicht.
+
+---
+
 ## 5. Die Architektur
 
 ```
@@ -372,6 +437,9 @@ Alle Ports stehen in der `.env` und lassen sich dort ändern.
 | `jav-agent` | – | – | Temporal-Worker auf eigener Queue `jav-agent-queue` |
 | `rentenberechnung` | – | – | Temporal-Worker auf eigener Queue `rentenberechnung-queue` |
 | `llm-agent` | – | – | generischer Claude-Agent für den Baustein „Agent" im Designer, Queue `llm-agent-queue` |
+| `n8n` | **25678** | `N8N_PORT` | Spielwiese: fertige Workflow-Automation mit Agent-Knoten |
+| `greenmail` | – | – | Spielwiese: lokaler Mailserver (SMTP + IMAP) |
+| `spielwiese` | **28090** | `SPIELWIESE_PORT` | Spielwiese: Mail schicken, Posteingang, Jira-Stub |
 
 Untereinander reden die Container über das interne Compose-Netz (`kafka:9092`,
 `temporal:7233`, `postgres:5432`). Die Ports oben sind nur dafür da, dass **Sie**
@@ -520,9 +588,11 @@ services/app/
   agenten/rentenberechnung.py          ► die Rentenformel (deterministisch)
   common/db.py                         Datenbankzugriff + Tabellen
   static/index.html · app.js · stil.css  die Weboberfläche
+  spielwiese/main.py · static/         Spielwiese: Mailversand, Posteingang, Jira-Stub
   static/designer.html · designer.js   der Prozessdesigner
   static/prozessgraph.js               Zeichenfläche (Designer + Live-Ansicht im Dialog)
   tests/test_prozess.py                Prüfung + Interpreter gegen einen Temporal-Testserver
+doku/n8n-mail-zu-jira.json             n8n-Workflow-Vorlage für die Spielwiese
 ```
 
 Die zwei fachlich interessantesten Dateien sind mit ► markiert.
