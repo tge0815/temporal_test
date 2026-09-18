@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prozessdesigner – Unfallversicherung</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧩</text></svg>">
+<link rel="stylesheet" href="/static/stil.css">
+</head>
+<body class="designer-seite">
+<header>
+  <div class="marke">
+    <span class="logo">UV</span>
+    <div>
+      <h1>Prozessdesigner</h1>
+      <p class="untertitel">Bausteine ziehen, verbinden, als neue Version speichern – läuft dann als Temporal-Workflow</p>
+    </div>
+  </div>
+  <div class="kopf-links">
+    <a href="/">← Zurück zum Dashboard</a>
+    <span id="health" class="pill pill-grau">verbinde …</span>
+  </div>
+</header>
+
+<div class="werkzeugleiste">
+  <label class="inline">Version
+    <select id="version-wahl"></select>
+  </label>
+  <button type="button" class="klein sekundaer" id="laden">Laden</button>
+  <button type="button" class="klein sekundaer" id="aktivieren" title="Neue Fälle starten ab jetzt mit dieser Version. Laufende Fälle bleiben bei ihrer.">Aktiv setzen</button>
+  <span class="trenner"></span>
+  <button type="button" class="klein sekundaer" id="pruefen">Prüfen</button>
+  <input id="kommentar" placeholder="Was ist neu in dieser Version?" maxlength="200">
+  <label class="inline haken"><input type="checkbox" id="gleich-aktivieren" checked> gleich aktivieren</label>
+  <button type="button" class="klein" id="speichern">Als neue Version speichern</button>
+  <span class="trenner"></span>
+  <button type="button" class="klein sekundaer" id="json-zeigen">JSON</button>
+  <span id="leiste-meldung" class="meldung"></span>
+</div>
+
+<div class="designer">
+  <!-- ===== Palette ===== -->
+  <aside class="palette karte">
+    <h2>Bausteine</h2>
+    <p class="hilfe">Klick fügt einen Knoten ein. Knoten ziehen, um sie zu verschieben. Vom Punkt unten am Knoten zu einem anderen Knoten ziehen, um sie zu verbinden. <kbd>Entf</kbd> löscht das Ausgewählte.</p>
+    <div id="palette-liste"></div>
+    <div class="legende">
+      <h3>Was ist hier echt?</h3>
+      <p class="hilfe">Jede Aktivität ist eine Temporal-Activity in einem eigenen Dienst. Der Graph wird beim Start eines Falls in die Workflow-Historie geschrieben; deshalb ist jede Version für laufende Fälle eingefroren.</p>
+    </div>
+  </aside>
+
+  <!-- ===== Zeichenfläche ===== -->
+  <section class="zeichenflaeche karte">
+    <div id="canvas"></div>
+  </section>
+
+  <!-- ===== Eigenschaften ===== -->
+  <aside class="eigenschaften karte">
+    <h2>Eigenschaften</h2>
+    <div id="eigenschaften-inhalt"><p class="hilfe">Knoten auswählen, um ihn zu bearbeiten.</p></div>
+    <div id="pruef-ergebnis"></div>
+  </aside>
+</div>
+
+<div id="overlay" class="overlay" hidden>
+  <div class="dialog">
+    <button class="schliessen" id="dialog-zu" aria-label="Schließen">×</button>
+    <h2>Prozess als JSON</h2>
+    <p class="hilfe">Genau das wird gespeichert und dem Temporal-Workflow beim Start als Argument übergeben.</p>
+    <pre id="json-inhalt" class="json-box"></pre>
+  </div>
+</div>
+
+<script src="/static/prozessgraph.js"></script>
+<script src="/static/designer.js"></script>
+</body>
+</html>

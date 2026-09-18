@@ -100,6 +100,22 @@ CREATE INDEX IF NOT EXISTS idx_dokumente_fall ON dokumente (fall_id, id);
 ALTER TABLE faelle ADD COLUMN IF NOT EXISTS mde_quelle    TEXT;
 ALTER TABLE faelle ADD COLUMN IF NOT EXISTS jav_gemeldet  NUMERIC;
 ALTER TABLE faelle ADD COLUMN IF NOT EXISTS jav_quelle    TEXT;
+
+-- Prozessdesigner: versionierte Prozessdefinitionen (Graphen). Jedes
+-- Speichern erzeugt eine neue Version; alte Versionen bleiben unveraendert,
+-- weil laufende Faelle darauf verweisen.
+CREATE TABLE IF NOT EXISTS prozess_definitionen (
+    id           BIGSERIAL PRIMARY KEY,
+    name         TEXT NOT NULL,
+    version      INT  NOT NULL,
+    graph        JSONB NOT NULL,
+    kommentar    TEXT,
+    aktiv        BOOLEAN NOT NULL DEFAULT false,
+    erstellt_am  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (name, version)
+);
+ALTER TABLE faelle ADD COLUMN IF NOT EXISTS prozess_name    TEXT;
+ALTER TABLE faelle ADD COLUMN IF NOT EXISTS prozess_version INT;
 """
 
 
@@ -176,6 +192,7 @@ async def fall_aktualisieren(fall_id: str, **felder: Any) -> None:
         "mde_quelle", "jav_gemeldet", "jav_quelle",
         "rente_jahr", "rente_monat", "rente_formel",
         "workflow_id", "workflow_run_id",
+        "prozess_name", "prozess_version",
     }
     felder = {k: v for k, v in felder.items() if k in erlaubt}
     if not felder:
@@ -225,6 +242,101 @@ async def dokumente_lesen(fall_id: str) -> list[dict]:
             fall_id,
         )
     return [_zeile_zu_dict(z) for z in zeilen]
+
+
+# --- Prozessdefinitionen (Designer) ----------------------------------------
+
+async def prozess_version_anlegen(name: str, graph: dict, kommentar: str | None,
+                                  aktivieren: bool) -> dict:
+    """Legt die naechste Version eines Prozesses an (nie ueberschreiben)."""
+    p = await pool()
+    async with p.acquire() as con:
+        async with con.transaction():
+            # Sperrt den Namen, damit zwei gleichzeitige Speichervorgaenge
+            # nicht dieselbe Versionsnummer bekommen.
+            await con.execute("SELECT pg_advisory_xact_lock(hashtext($1))", name)
+            version = await con.fetchval(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM prozess_definitionen "
+                "WHERE name = $1", name)
+            if aktivieren:
+                await con.execute(
+                    "UPDATE prozess_definitionen SET aktiv = false WHERE name = $1",
+                    name)
+            zeile = await con.fetchrow(
+                """INSERT INTO prozess_definitionen
+                       (name, version, graph, kommentar, aktiv)
+                   VALUES ($1, $2, $3::jsonb, $4, $5)
+                   RETURNING id, name, version, kommentar, aktiv, erstellt_am""",
+                name, version, json.dumps(graph, ensure_ascii=False), kommentar,
+                aktivieren)
+    return _zeile_zu_dict(zeile)
+
+
+async def prozess_version_aktivieren(name: str, version: int) -> bool:
+    p = await pool()
+    async with p.acquire() as con:
+        async with con.transaction():
+            vorhanden = await con.fetchval(
+                "SELECT 1 FROM prozess_definitionen WHERE name=$1 AND version=$2",
+                name, version)
+            if not vorhanden:
+                return False
+            await con.execute(
+                "UPDATE prozess_definitionen SET aktiv = false WHERE name = $1", name)
+            await con.execute(
+                "UPDATE prozess_definitionen SET aktiv = true "
+                "WHERE name = $1 AND version = $2", name, version)
+    return True
+
+
+async def prozesse_lesen() -> list[dict]:
+    """Alle Prozesse mit ihren Versionen (ohne die Graphen selbst)."""
+    p = await pool()
+    async with p.acquire() as con:
+        zeilen = await con.fetch(
+            """SELECT id, name, version, kommentar, aktiv, erstellt_am,
+                      jsonb_array_length(graph->'knoten') AS knoten
+               FROM prozess_definitionen ORDER BY name, version""")
+    return [_zeile_zu_dict(z) for z in zeilen]
+
+
+async def prozess_lesen(name: str, version: int | None = None) -> dict | None:
+    """Eine bestimmte Version - oder ohne Angabe die aktive."""
+    p = await pool()
+    async with p.acquire() as con:
+        if version is None:
+            z = await con.fetchrow(
+                "SELECT * FROM prozess_definitionen WHERE name=$1 AND aktiv "
+                "ORDER BY version DESC LIMIT 1", name)
+        else:
+            z = await con.fetchrow(
+                "SELECT * FROM prozess_definitionen WHERE name=$1 AND version=$2",
+                name, version)
+    if not z:
+        return None
+    d = _zeile_zu_dict(z)
+    if isinstance(d.get("graph"), str):
+        d["graph"] = json.loads(d["graph"])
+    return d
+
+
+async def prozess_sicherstellen(name: str, graph: dict) -> None:
+    """Legt Version 1 an, falls es den Prozess noch nicht gibt (idempotent)."""
+    p = await pool()
+    async with p.acquire() as con:
+        async with con.transaction():
+            await con.execute("SELECT pg_advisory_xact_lock(hashtext($1))", name)
+            vorhanden = await con.fetchval(
+                "SELECT 1 FROM prozess_definitionen WHERE name = $1 LIMIT 1", name)
+            if vorhanden:
+                return
+            await con.execute(
+                """INSERT INTO prozess_definitionen
+                       (name, version, graph, kommentar, aktiv)
+                   VALUES ($1, 1, $2::jsonb, $3, true)""",
+                name, json.dumps(graph, ensure_ascii=False),
+                "Standardablauf, automatisch angelegt")
+    log.info("Prozess '%s' Version 1 angelegt", name)
 
 
 # --- Leseoperationen -------------------------------------------------------

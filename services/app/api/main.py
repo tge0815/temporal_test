@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from common import config, db, gutachten
+from common import config, db, gutachten, prozess
 from common.temporal_util import verbinde
 from agenten.jav_agent import simulierte_meldung
 
@@ -60,6 +60,7 @@ async def _verbindungen_aufbauen() -> None:
     """
     try:
         await db.pool()
+        await db.prozess_sicherstellen(prozess.PROZESS_NAME, prozess.standard_graph())
         zustand["db"] = True
     except Exception:  # noqa: BLE001
         log.exception("PostgreSQL nicht erreichbar")
@@ -96,6 +97,9 @@ class UnfallMeldung(BaseModel):
     koerperteil: str
     schwere: str
     hergang: str = Field(default="", max_length=2000)
+    # Optional: mit einer bestimmten Prozessversion starten (Designer).
+    # Ohne Angabe gilt die im Designer aktivierte Version.
+    prozess_version: int | None = Field(default=None, ge=1)
 
 
 # --- API -------------------------------------------------------------------
@@ -130,12 +134,17 @@ async def unfall_melden(meldung: UnfallMeldung) -> dict:
     fall_id = str(uuid.uuid4())
     fall_nummer = (f"UV-{datetime.now().year}-"
                    f"{random.randint(100000, 999999)}")
+    if meldung.prozess_version is not None:
+        if not await db.prozess_lesen(prozess.PROZESS_NAME, meldung.prozess_version):
+            raise HTTPException(404, f"Prozessversion {meldung.prozess_version} "
+                                     "gibt es nicht")
     event = {
         "id": fall_id,
         "fall_nummer": fall_nummer,
         "ereignis_typ": "UNFALL_GEMELDET",
         "gemeldet_am": datetime.now(timezone.utc).isoformat(),
-        **meldung.model_dump(mode="json"),
+        **meldung.model_dump(mode="json", exclude_none=True),
+        "prozess_name": prozess.PROZESS_NAME,
     }
 
     metadaten = await producer.send_and_wait(
@@ -209,6 +218,114 @@ async def workflow_zustand(fall_id: str) -> JSONResponse:
         return JSONResponse(antwort)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"verfuegbar": False, "grund": str(e)})
+
+
+@app.get("/api/faelle/{fall_id}/prozess")
+async def fall_prozess(fall_id: str) -> JSONResponse:
+    """Der Graph, mit dem dieser Fall läuft – plus Live-Zustand je Knoten."""
+    _db_bereit()
+    daten = await db.fall_lesen(fall_id)
+    if not daten:
+        raise HTTPException(404, "Fall nicht gefunden")
+    if not daten.get("prozess_name"):
+        return JSONResponse({"verfuegbar": False,
+                             "grund": "Fall läuft noch mit dem fest programmierten "
+                                      "Workflow (vor dem Designer angelegt)"})
+    definition = await db.prozess_lesen(daten["prozess_name"], daten["prozess_version"])
+    if not definition:
+        return JSONResponse({"verfuegbar": False, "grund": "Prozessversion nicht gefunden"})
+    antwort = {
+        "verfuegbar": True,
+        "name": definition["name"], "version": definition["version"],
+        "graph": definition["graph"],
+        "knoten_status": {}, "entscheidungen": {}, "pfad": [],
+    }
+    if daten.get("workflow_id") and zustand["temporal"] is not None:
+        try:
+            handle = zustand["temporal"].get_workflow_handle(daten["workflow_id"])
+            z = await handle.query("zustand")
+            antwort["knoten_status"] = z.get("knoten_status", {})
+            antwort["entscheidungen"] = z.get("entscheidungen", {})
+            antwort["pfad"] = z.get("pfad", [])
+            antwort["aktueller_knoten"] = z.get("aktueller_knoten")
+        except Exception as e:  # noqa: BLE001
+            antwort["zustand_fehler"] = str(e)
+    return JSONResponse(antwort)
+
+
+# --- Prozessdesigner -------------------------------------------------------
+
+class ProzessVersion(BaseModel):
+    graph: dict
+    kommentar: str = Field(default="", max_length=500)
+    aktivieren: bool = False
+
+
+class GraphPruefung(BaseModel):
+    graph: dict
+
+
+@app.get("/api/katalog")
+async def katalog() -> dict:
+    """Bausteine für die Palette im Designer."""
+    return prozess.katalog()
+
+
+@app.get("/api/prozesse")
+async def prozesse() -> list[dict]:
+    """Alle Prozessversionen (Metadaten, ohne Graph)."""
+    _db_bereit()
+    return await db.prozesse_lesen()
+
+
+@app.get("/api/prozesse/{name}/aktiv")
+async def prozess_aktiv(name: str) -> dict:
+    _db_bereit()
+    d = await db.prozess_lesen(name)
+    if not d:
+        raise HTTPException(404, "Keine aktive Version")
+    return d
+
+
+@app.get("/api/prozesse/{name}/versionen/{version}")
+async def prozess_version(name: str, version: int) -> dict:
+    _db_bereit()
+    d = await db.prozess_lesen(name, version)
+    if not d:
+        raise HTTPException(404, "Version nicht gefunden")
+    return d
+
+
+@app.post("/api/prozesse/pruefen")
+async def prozess_pruefen(eingabe: GraphPruefung) -> dict:
+    return prozess.pruefen(eingabe.graph)
+
+
+@app.post("/api/prozesse/{name}/versionen", status_code=201)
+async def prozess_speichern(name: str, eingabe: ProzessVersion) -> dict:
+    """Legt IMMER eine neue Version an. Alte Versionen werden nie verändert –
+    laufende Fälle verweisen auf sie."""
+    _db_bereit()
+    ergebnis = prozess.pruefen(eingabe.graph)
+    if ergebnis["fehler"]:
+        raise HTTPException(422, {"fehler": ergebnis["fehler"],
+                                  "warnungen": ergebnis["warnungen"]})
+    graph = {**eingabe.graph, "name": name}
+    neu = await db.prozess_version_anlegen(name, graph, eingabe.kommentar or None,
+                                           eingabe.aktivieren)
+    neu["warnungen"] = ergebnis["warnungen"]
+    log.info("Prozess '%s' Version %s gespeichert%s", name, neu["version"],
+             " und aktiviert" if eingabe.aktivieren else "")
+    return neu
+
+
+@app.post("/api/prozesse/{name}/versionen/{version}/aktivieren")
+async def prozess_aktivieren(name: str, version: int) -> dict:
+    """Ab jetzt starten neue Fälle mit dieser Version. Laufende bleiben."""
+    _db_bereit()
+    if not await db.prozess_version_aktivieren(name, version):
+        raise HTTPException(404, "Version nicht gefunden")
+    return {"name": name, "version": version, "aktiv": True}
 
 
 # --- Gutachten und Entgeltmeldung -----------------------------------------
@@ -364,3 +481,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(str(STATIC / "index.html"))
+
+
+@app.get("/designer")
+async def designer() -> FileResponse:
+    return FileResponse(str(STATIC / "designer.html"))

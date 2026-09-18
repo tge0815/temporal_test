@@ -29,6 +29,8 @@ let offenerFall = null;      // ID des im Dialog geöffneten Falls
 let listenSignatur = "";     // verhindert unnötiges Neuzeichnen
 let dialogSignatur = "";
 let stammdaten = {};
+let katalog = null;          // Bausteine des Designers (für die Graph-Anzeige)
+let prozessSignatur = "";    // Versionsliste im Formular nur bei Änderung neu füllen
 
 const eur = (n) => n == null ? "–" :
   Number(n).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -41,6 +43,7 @@ async function start() {
   document.querySelector('input[name="unfall_datum"]').valueAsDate = new Date();
 
   stammdaten = await (await fetch("/api/stammdaten")).json();
+  katalog = await fetch("/api/katalog").then((r) => r.json()).catch(() => null);
   fuelleSelect("sel-beruf", stammdaten.berufe, "Bauarbeiter");
   fuelleSelect("sel-koerperteil", stammdaten.koerperteile, "Bein");
   fuelleSelect("sel-schwere", stammdaten.schweregrade, "mittel");
@@ -82,6 +85,8 @@ async function absenden(ereignis) {
   const meldung = document.getElementById("form-meldung");
   const daten = Object.fromEntries(new FormData(ereignis.target).entries());
   daten.geburtsjahr = Number(daten.geburtsjahr);
+  if (daten.prozess_version) daten.prozess_version = Number(daten.prozess_version);
+  else delete daten.prozess_version;
 
   knopf.disabled = true;
   meldung.className = "meldung";
@@ -115,10 +120,25 @@ async function tick() {
     ]);
     zeigeHealth(health);
     zeichneFaelle(faelle);
+    prozessVersionenNachladen();
     if (offenerFall) zeichneDialog(offenerFall);
   } catch (e) {
     zeigeHealth(null);
   }
+}
+
+/* Versionsliste im Formular: die aktive Version ist vorausgewählt. Nur neu
+   füllen, wenn sich im Designer etwas getan hat. */
+async function prozessVersionenNachladen() {
+  const liste = await fetch("/api/prozesse").then((r) => r.ok ? r.json() : []).catch(() => []);
+  const signatur = JSON.stringify(liste);
+  if (signatur === prozessSignatur) return;
+  prozessSignatur = signatur;
+  const sel = document.getElementById("sel-prozess");
+  const vorher = sel.value;
+  sel.innerHTML = `<option value="">aktive Version</option>` + liste.map((v) =>
+    `<option value="${v.version}">v${v.version}${v.aktiv ? " (aktiv)" : ""}${v.kommentar ? " – " + esc(v.kommentar) : ""}</option>`).join("");
+  if ([...sel.options].some((o) => o.value === vorher)) sel.value = vorher;
 }
 
 function zeigeHealth(h) {
@@ -165,7 +185,7 @@ function fallKarte(f) {
       <div>
         <div class="fall-titel">${esc(f.fall_nummer)} · ${esc(f.versicherter)}</div>
         <div class="fall-meta">${esc(f.beruf)} · ${esc(f.koerperteil)} · ${esc(f.schwere)}
-          · gemeldet ${uhr(f.erstellt_am)}</div>
+          · gemeldet ${uhr(f.erstellt_am)}${f.prozess_version ? ` · Prozess v${f.prozess_version}` : ""}</div>
       </div>
       <span class="pill ${klasse}">${text}</span>
     </div>
@@ -283,14 +303,15 @@ function dialogSchliessen() {
 }
 
 async function zeichneDialog(id) {
-  const [f, wf] = await Promise.all([
+  const [f, wf, pz] = await Promise.all([
     fetch(`/api/faelle/${id}`).then((r) => r.json()),
     fetch(`/api/faelle/${id}/workflow`).then((r) => r.json()).catch(() => null),
+    fetch(`/api/faelle/${id}/prozess`).then((r) => r.json()).catch(() => null),
   ]);
   if (offenerFall !== id) return;   // zwischenzeitlich geschlossen
 
   // Nicht jede Sekunde neu zeichnen – sonst klappen geöffnete Details zu.
-  const signatur = JSON.stringify([f, wf]);
+  const signatur = JSON.stringify([f, wf, pz]);
   if (signatur === dialogSignatur) return;
   dialogSignatur = signatur;
 
@@ -326,11 +347,45 @@ async function zeichneDialog(id) {
     ${f.rente_formel ? `<h3>Rechenweg (deterministisch)</h3>
       <div class="formelbox">${esc(f.rente_formel)}</div>` : ""}
 
+    <h3>Prozess (live)</h3>
+    ${prozessBlock(pz)}
+
     <h3>Temporal-Workflow</h3>
     ${workflowBlock(wf)}
 
     <h3>Verarbeitungsverlauf</h3>
     <div class="zeitstrahl">${(f.verlauf || []).map(verlaufEintrag).join("")}</div>`;
+
+  prozessZeichnen(pz);
+}
+
+function prozessBlock(pz) {
+  if (!pz || !pz.verfuegbar) {
+    return `<p class="hilfe">${esc(pz?.grund || "Prozess nicht verfügbar")}</p>`;
+  }
+  const fertig = Object.values(pz.knoten_status || {}).filter((z) => z === "fertig").length;
+  return `<div class="fall-prozess-kopf">
+      <span class="pill pill-blau">${esc(pz.name)} · Version ${pz.version}</span>
+      <span>${fertig} von ${pz.graph.knoten.length} Knoten erledigt</span>
+      <a class="aktion-link" style="margin:0 0 0 auto" href="/designer">Im Designer öffnen ↗</a>
+    </div>
+    <div id="fall-graph" class="fall-graph"></div>
+    <p class="hilfe" style="margin-top:8px">Dieser Graph stammt aus der Workflow-Historie des Falls:
+      die Version, mit der er gestartet wurde. Spätere Änderungen im Designer
+      betreffen ihn nicht. Farben kommen aus einer Temporal-Query gegen den laufenden Workflow.</p>`;
+}
+
+function prozessZeichnen(pz) {
+  const ziel = document.getElementById("fall-graph");
+  if (!ziel || !pz || !pz.verfuegbar || typeof ProzessCanvas === "undefined") return;
+  const c = new ProzessCanvas(ziel, { editierbar: false, katalog });
+  c.setGraph(pz.graph);
+  c.setStatus({ knoten_status: pz.knoten_status, entscheidungen: pz.entscheidungen,
+                pfad: pz.pfad, aktueller_knoten: pz.aktueller_knoten });
+  // Zum aktuellen Knoten scrollen, damit man ihn ohne Suchen sieht
+  const aktuell = pz.aktueller_knoten || pz.pfad?.[pz.pfad.length - 1];
+  const k = pz.graph.knoten.find((n) => n.id === aktuell);
+  if (k) ziel.scrollTop = Math.max(0, (k.y || 0) - 140);
 }
 
 function dokumenteBlock(f) {
@@ -358,7 +413,7 @@ function workflowBlock(wf) {
       <div><span>Task-Queue</span>${esc(wf.task_queue)}</div>
       <div><span>Status</span>${esc(wf.status)}</div>
       <div><span>Aktueller Schritt</span>${esc(z.aktueller_schritt || "–")}</div>
-      <div><span>Erledigte Schritte</span>${esc((z.erledigte_schritte || []).length)} / 5</div>
+      <div><span>Erledigte Schritte</span>${esc((z.erledigte_schritte || []).length)}</div>
       ${z.wartet_auf ? `<div><span>Wartet auf</span>${esc(z.wartet_auf)}</div>` : ""}
       <div><span>Erinnerungen</span>${anzahl}</div>
     </div>

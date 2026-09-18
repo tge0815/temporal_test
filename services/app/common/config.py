@@ -25,6 +25,8 @@ QUEUE_ORCHESTRATOR = "orchestrator-queue"
 QUEUE_MDE = "mde-agent-queue"
 QUEUE_JAV = "jav-agent-queue"
 QUEUE_RENTE = "rentenberechnung-queue"
+# Generischer Claude-Agent fuer den "Agent"-Knoten im Prozessdesigner
+QUEUE_AGENT = "llm-agent-queue"
 
 # --- Demo-Tempo ------------------------------------------------------------
 # Kuenstliche Verzoegerung der Agenten, damit man im Dashboard zusehen kann.

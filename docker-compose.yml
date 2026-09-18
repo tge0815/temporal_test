@@ -9,7 +9,7 @@
 #  im Dashboard auf localhost.
 # =============================================================================
 
-# Alle sechs Anwendungs-Services teilen sich EIN Image (wird nur einmal gebaut).
+# Alle sieben Anwendungs-Services teilen sich EIN Image (wird nur einmal gebaut).
 x-app: &app
   build:
     context: ./services/app
@@ -181,7 +181,9 @@ services:
         condition: service_started
 
   # ---------------------------------------------------------------------
-  # Orchestrator: haelt die Workflow-Definition (MdE -> JAV -> Rente)
+  # Orchestrator: fuehrt die Prozessgraphen aus dem Designer aus
+  # (Interpreter-Workflow "Prozess"); der alte feste Workflow bleibt
+  # registriert, damit frueher gestartete Faelle weiterlaufen.
   # ---------------------------------------------------------------------
   orchestrator:
     <<: *app
@@ -238,6 +240,20 @@ services:
       temporal:
         # bewusst nur service_started: die Worker haben eine eigene
         # Retry-Schleife und warten geduldig, bis Temporal bereit ist.
+        condition: service_started
+
+  # ---------------------------------------------------------------------
+  # Agent 3: generischer Claude-Agent fuer den "Agent"-Knoten im Designer.
+  # Ohne Schluessel antwortet er ehrlich mit "unklar".
+  # ---------------------------------------------------------------------
+  llm-agent:
+    <<: *app
+    container_name: uv-llm-agent
+    command: python -m agenten.llm_agent
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
         condition: service_started
 
 volumes:

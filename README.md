@@ -71,6 +71,7 @@ uv-orchestrator     | Orchestrator-Worker läuft auf Queue 'orchestrator-queue'
 uv-mde-agent        | mde-agent läuft auf Queue 'mde-agent-queue'
 uv-jav-agent        | jav-agent läuft auf Queue 'jav-agent-queue'
 uv-rentenberechnung | rentenberechnung läuft auf Queue 'rentenberechnung-queue'
+uv-llm-agent        | llm-agent läuft auf Queue 'llm-agent-queue' (ohne Schluessel)
 ```
 
 ## 2. Welche Seite öffne ich?
@@ -81,6 +82,7 @@ Setzen Sie für `<HOST_IP>` die IP ein, die Sie in die `.env` eingetragen haben
 | Was | URL |
 | --- | --- |
 | **Dashboard – hier klicken Sie** | **http://\<HOST_IP\>:28080** |
+| **Prozessdesigner** – den Ablauf selbst zusammenstecken (Abschnitt 4c) | http://\<HOST_IP\>:28080/designer |
 | Temporal-Oberfläche (der Blick „unter die Motorhaube") | http://\<HOST_IP\>:28233 |
 
 Alles Weitere passiert auf **http://\<HOST_IP\>:28080**.
@@ -206,6 +208,85 @@ Leerlauf entstehen keine Kosten.
 
 ---
 
+## 4c. Der Prozessdesigner – den Ablauf selbst zusammenstecken
+
+Bis hierhin stand die Reihenfolge der Schritte fest im Code. Der
+**Prozessdesigner** unter http://\<HOST_IP\>:28080/designer macht daraus
+einen Graphen, den man im Browser umbaut: Bausteine aus der Palette einfügen,
+verschieben, verbinden, speichern. Neue Unfallmeldungen laufen dann mit dem
+neuen Ablauf – als ganz normaler Temporal-Workflow.
+
+Der Punkt dieser Ergänzung ist nicht, dass man das braucht. Der Punkt ist zu
+zeigen, **wie wenig dazu nötig ist**, wenn die Engine darunter schon da ist:
+
+* ein JSON-Format für Knoten und Kanten (`common/prozess.py`),
+* ein Workflow, der den Graphen Knoten für Knoten abläuft und dabei dieselben
+  Activities aufruft wie vorher (`orchestrator/prozess_workflow.py`, ~200 Zeilen),
+* eine Zeichenfläche ohne Framework und ohne Build-Schritt
+  (`static/prozessgraph.js`, `static/designer.js`).
+
+### Bausteine
+
+| Baustein | Was er tut | Was dahinter steckt |
+|---|---|---|
+| **Aktivität** | ruft einen der vorhandenen Dienste auf | `execute_activity` auf der Task-Queue des Dienstes |
+| **Warten auf Ereignis** | hält den Fall an, bis Gutachten bzw. Entgeltmeldung eintreffen; erinnert nach Ablauf der Frist | `wait_condition` + Timer + Signal – genau wie im festen Workflow |
+| **Bedingung** | vergleicht einen Wert aus dem Kontext, Ausgänge *ja* / *nein* | ein `if` |
+| **Agent (Claude)** | stellt Claude eine Frage mit Werten aus dem Kontext, liefert Antwort, Einschätzung (ja/nein/unklar) und Konfidenz | eine Activity im Dienst `llm-agent`; ohne Schlüssel antwortet er ehrlich „unklar" |
+| **Notiz** | schreibt einen Eintrag in den Verlauf | nützlich, um einen Zweig sichtbar zu machen |
+| **Start / Ende** | Anfang und Abschluss des Falls | |
+
+**Datenfluss:** Alle Knoten teilen sich einen **Kontext** – ein einfaches
+Wörterbuch. Am Anfang liegt darin nur `fall`; jeder Baustein legt sein
+Ergebnis unter einem Namen ab (`mde`, `jav`, `rente`, `agent` …), und spätere
+Bausteine greifen per Pfad darauf zu: `mde.mde_prozent`, `rente.rente_monat_euro`,
+`agent.einschaetzung`. In Prompts und Notizen schreibt man `{{mde.mde_prozent}}`.
+
+### Versionen – der eigentlich wichtige Teil
+
+Jedes Speichern legt eine **neue Version** an; alte Versionen werden nie
+verändert. Beim Start eines Falls wird der Graph der gewählten Version dem
+Temporal-Workflow **als Argument** übergeben und liegt damit in dessen
+Historie. Deshalb gilt:
+
+* Ein Fall läuft bis zum Ende mit der Version, mit der er gestartet wurde –
+  auch wenn er wochenlang auf ein Gutachten wartet und der Prozess in der
+  Zwischenzeit dreimal umgebaut wurde.
+* Ein Neustart aller Container ändert daran nichts: Temporal spielt die
+  Historie nach, und der Graph ist Teil der Historie.
+* Im Formular „Unfall melden" lässt sich die Version wählen; ohne Auswahl gilt
+  die im Designer **aktivierte** Version.
+
+Ohne diese Regel bricht eine Prozess-Engine bei der ersten Änderung an einem
+laufenden Prozess. Das ist bei jedem Werkzeug dieser Art so, egal wie hübsch der
+Canvas ist.
+
+### So probiert man es aus
+
+1. http://\<HOST_IP\>:28080/designer öffnen. Version 1 ist der Standardablauf.
+2. Aus der Palette **Bedingung** einfügen, z. B. `rente.rente_monat_euro >= 100`.
+   Die Kante von „Rente berechnen" auf die Bedingung ziehen (vom Punkt unten am
+   Knoten zum Zielknoten), Ausgang **ja** auf „Ende", Ausgang **nein** auf eine
+   neue **Notiz** („Bagatellrente, bitte prüfen") und von dort auf „Ende".
+3. **Prüfen**, dann **Als neue Version speichern** (Kommentar eintragen).
+   Version 2 ist jetzt aktiv.
+4. Im Dashboard einen Unfall melden. In der Fallkarte steht „Prozess v2";
+   in der Detailansicht unter **Prozess (live)** färbt sich der Graph mit
+   dem Fortschritt und zeigt, wie die Bedingung entschieden wurde.
+5. Gegenprobe zur Versionierung: einen Fall mit v1 starten (Auswahl im
+   Formular), bei „Wartet auf Gutachten" stehen lassen, im Designer eine
+   Version 3 speichern und aktivieren – der wartende Fall läuft weiterhin mit
+   v1 durch, ein neuer Fall mit v3.
+
+### Was der Designer bewusst nicht kann
+
+Parallele Zweige, Schleifen mit Abbruchbedingung, Fehlerpfade je Knoten,
+Undo, Rechte, mehrere Prozesse. Jedes davon ist machbar, jedes verdoppelt
+etwa den Interpreter. Eine Schleife im Graphen wird beim Prüfen als Warnung
+gemeldet; der Interpreter bricht nach 200 Schritten ab.
+
+---
+
 ## 5. Die Architektur
 
 ```
@@ -275,10 +356,11 @@ Alle Ports stehen in der `.env` und lassen sich dort ändern.
 | `temporal-ui` | **28233** | `TEMPORAL_UI_PORT` | Weboberfläche von Temporal |
 | `postgres` | 25432 | `POSTGRES_PORT` | Fälle und Verlauf (und die Temporal-Datenbank) |
 | `event-consumer` | – | – | liest Kafka-Events, speichert, startet den Workflow |
-| `orchestrator` | – | – | hält die Workflow-Definition (Reihenfolge der Schritte) |
+| `orchestrator` | – | – | führt den Prozessgraphen aus (Interpreter-Workflow `Prozess`) |
 | `mde-agent` | – | – | Temporal-Worker auf eigener Queue `mde-agent-queue` |
 | `jav-agent` | – | – | Temporal-Worker auf eigener Queue `jav-agent-queue` |
 | `rentenberechnung` | – | – | Temporal-Worker auf eigener Queue `rentenberechnung-queue` |
+| `llm-agent` | – | – | generischer Claude-Agent für den Baustein „Agent" im Designer, Queue `llm-agent-queue` |
 
 Untereinander reden die Container über das interne Compose-Netz (`kafka:9092`,
 `temporal:7233`, `postgres:5432`). Die Ports oben sind nur dafür da, dass **Sie**
@@ -307,7 +389,8 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 ```
 
 **Temporal:** Öffnen Sie http://\<HOST_IP\>:28233. Dort sehen Sie zu jedem Fall einen
-Workflow `UnfallSachbearbeitung` mit der ID `unfall-UV-2026-…`, die Event-History
+Workflow `Prozess` mit der ID `unfall-UV-2026-…` (in der Eingabe steht der
+komplette Prozessgraph), die Event-History
 und jede einzelne Activity mit Dauer. Im Dashboard zeigt die Detailansicht unter
 „Temporal-Workflow" den Zustand, der per **Temporal-Query** live aus dem laufenden
 Workflow geholt wird.
@@ -328,8 +411,9 @@ Sachbearbeitungskette hat: Ein Fall läuft über Minuten, Stunden oder Tage, ein
 Schritte können scheitern und müssen wiederholt werden, und man muss jederzeit sagen
 können, wo ein Fall gerade steht. Temporal merkt sich den Fortschritt, wiederholt
 fehlgeschlagene Schritte automatisch (hier: bis zu 3 Versuche) und macht den Zustand
-abfragbar. Der Aufwand ist überschaubar: zwei Container (Server + UI) und die
-Workflow-Datei `services/app/orchestrator/workflow.py`.
+abfragbar. Der Aufwand ist überschaubar: zwei Container (Server + UI) und eine
+Workflow-Datei (`services/app/orchestrator/prozess_workflow.py`; der ursprüngliche,
+fest programmierte Ablauf steht zum Vergleich weiter in `workflow.py`).
 
 Falls Temporal in Ihrer Umgebung nicht laufen darf, wären die naheliegenden
 Alternativen: **(a)** Kafka-Topics je Schritt, bei denen jeder Agent das Ergebnis des
@@ -414,14 +498,20 @@ config/dynamicconfig/                  Einstellungen für den Temporal-Server
 services/app/
   api/main.py                          Dashboard-API + Kafka-Producer
   consumer/main.py                     Eingang: Kafka lesen → speichern → Workflow starten
-  orchestrator/workflow.py             ► die Reihenfolge der Schritte (Temporal-Workflow)
-  orchestrator/worker.py               Statuswechsel + Abschluss
+  orchestrator/prozess_workflow.py     ► der Interpreter: läuft den Prozessgraphen ab
+  orchestrator/workflow.py             der ursprüngliche, fest programmierte Ablauf
+  orchestrator/worker.py               Statuswechsel, Verlauf, Abschluss
+  common/prozess.py                    ► Graph-Format, Bausteinkatalog, Prüfung, Standardprozess
+  agenten/llm_agent.py                 generischer Claude-Agent (Baustein „Agent")
   agenten/mde_agent.py                 MdE aus dem Gutachten lesen
   agenten/jav_agent.py                 gemeldeten JAV plausibilisieren
   common/gutachten.py                  ► Beispiel-PDF, Textextraktion, Claude
   agenten/rentenberechnung.py          ► die Rentenformel (deterministisch)
   common/db.py                         Datenbankzugriff + Tabellen
   static/index.html · app.js · stil.css  die Weboberfläche
+  static/designer.html · designer.js   der Prozessdesigner
+  static/prozessgraph.js               Zeichenfläche (Designer + Live-Ansicht im Dialog)
+  tests/test_prozess.py                Prüfung + Interpreter gegen einen Temporal-Testserver
 ```
 
 Die zwei fachlich interessantesten Dateien sind mit ► markiert.

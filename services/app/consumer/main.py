@@ -15,7 +15,7 @@ import logging
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import KafkaError
 
-from common import config, db
+from common import config, db, prozess
 from common.temporal_util import verbinde
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -73,11 +73,28 @@ async def verarbeite(nachricht, temporal_client) -> None:
         },
     )
 
-    # --- Schritt 2: Orchestrator informieren (Temporal-Workflow starten) --
+    # --- Schritt 2: Prozessdefinition waehlen ------------------------------
+    # Die Meldung darf eine bestimmte Version verlangen; sonst gilt die im
+    # Designer aktivierte. Der Graph wird dem Workflow als Argument
+    # mitgegeben und liegt damit fest in dessen Historie: spaetere
+    # Aenderungen im Designer erreichen diesen Fall nicht mehr.
+    name = event.get("prozess_name") or prozess.PROZESS_NAME
+    version = event.get("prozess_version")
+    definition = await db.prozess_lesen(name, version)
+    if definition is None:
+        raise RuntimeError(f"Prozess '{name}' Version {version or 'aktiv'} "
+                           "nicht gefunden")
+    await db.fall_aktualisieren(
+        fall_id, prozess_name=definition["name"],
+        prozess_version=definition["version"])
+
+    # --- Schritt 3: Orchestrator informieren (Temporal-Workflow starten) --
     workflow_id = f"unfall-{event['fall_nummer']}"
     handle = await temporal_client.start_workflow(
-        "UnfallSachbearbeitung",
-        args=[event],
+        "Prozess",
+        args=[event, {"name": definition["name"],
+                      "version": definition["version"],
+                      "graph": definition["graph"]}],
         id=workflow_id,
         task_queue=config.QUEUE_ORCHESTRATOR,
     )
@@ -87,16 +104,23 @@ async def verarbeite(nachricht, temporal_client) -> None:
     )
     await db.verlauf_schreiben(
         fall_id, "Orchestrierung", "orchestrator (Temporal)", "GESTARTET",
-        f"Temporal-Workflow '{workflow_id}' gestartet – steuert jetzt "
-        f"MdE → JAV → Rentenberechnung",
+        f"Temporal-Workflow '{workflow_id}' gestartet mit Prozess "
+        f"'{definition['name']}' Version {definition['version']} "
+        f"({len(definition['graph']['knoten'])} Knoten). Der Graph liegt "
+        f"jetzt in der Workflow-Historie – spätere Änderungen im Designer "
+        f"betreffen diesen Fall nicht.",
         {"workflow_id": handle.id, "run_id": handle.result_run_id,
-         "task_queue": config.QUEUE_ORCHESTRATOR},
+         "task_queue": config.QUEUE_ORCHESTRATOR,
+         "prozess_name": definition["name"],
+         "prozess_version": definition["version"]},
     )
-    log.info("Workflow %s gestartet (run %s)", handle.id, handle.result_run_id)
+    log.info("Workflow %s gestartet (run %s, Prozess %s v%s)", handle.id,
+             handle.result_run_id, definition["name"], definition["version"])
 
 
 async def main() -> None:
     await db.pool()
+    await db.prozess_sicherstellen(prozess.PROZESS_NAME, prozess.standard_graph())
     temporal_client = await verbinde()
     consumer = await kafka_consumer()
     try:

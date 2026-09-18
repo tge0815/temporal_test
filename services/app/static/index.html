@@ -17,6 +17,7 @@
     </div>
   </div>
   <div class="kopf-links">
+    <a href="/designer">Prozessdesigner 🧩</a>
     <a id="temporal-link" href="http://localhost:8233" target="_blank" rel="noopener">Temporal-Oberfläche ↗</a>
     <span id="health" class="pill pill-grau">verbinde …</span>
   </div>
@@ -54,6 +55,9 @@
       </div>
       <label>Unfallhergang
         <textarea name="hergang" rows="3">Sturz von einem Gerüst aus etwa 3 Metern Höhe auf der Baustelle.</textarea>
+      </label>
+      <label><span>Prozessversion – aus dem <a href="/designer">Prozessdesigner</a></span>
+        <select name="prozess_version" id="sel-prozess"></select>
       </label>
       <button type="submit" id="absenden">Unfall melden → Event auslösen</button>
       <div id="form-meldung" class="meldung"></div>
@@ -93,6 +97,7 @@
   </div>
 </div>
 
+<script src="/static/prozessgraph.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

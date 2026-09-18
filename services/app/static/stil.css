@@ -221,3 +221,100 @@ button.klein.sekundaer { background: #2c3756; color: var(--text); }
 .konfidenz { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--gedimmt); margin-top: 6px; }
 .konfidenz .leiste { width: 90px; height: 6px; background: #2c3756; border-radius: 3px; overflow: hidden; }
 .konfidenz .fuellung { height: 100%; background: var(--akzent); }
+
+/* =====================================================================
+   Prozessgraph (Designer + Live-Ansicht im Dashboard)
+   ===================================================================== */
+:root { --pg-kante: #5b6b8f; --tuerkis: #3ecfcf; }
+.pg-container { overflow: auto; position: relative; background:
+  radial-gradient(circle, #26304a 1px, transparent 1px) 0 0 / 22px 22px; border-radius: 10px; }
+.pg-flaeche { position: relative; min-width: 100%; }
+.pg-kanten { position: absolute; left: 0; top: 0; z-index: 1; overflow: visible; }
+.pg-knoten-ebene { position: absolute; left: 0; top: 0; z-index: 2; }
+.pg-knoten {
+  position: absolute; background: var(--karte2); border: 1.5px solid var(--rand);
+  border-radius: 10px; padding: 8px 12px 14px; font-size: 12.5px; user-select: none;
+  box-shadow: 0 4px 14px rgba(0,0,0,.25);
+}
+.pg-container.editierbar .pg-knoten, .designer .pg-knoten { cursor: grab; }
+.pg-knoten.gewaehlt { outline: 2px solid var(--akzent); }
+.pg-knoten.ziel { outline: 2px dashed var(--gruen); }
+.pg-knoten.fertig { border-color: var(--gruen); }
+.pg-knoten.aktiv { border-color: var(--gelb); box-shadow: 0 0 0 3px rgba(242,181,68,.25); animation: laufen 1.2s ease-in-out infinite; }
+.pg-knoten.wartet { border-color: var(--lila); box-shadow: 0 0 0 3px rgba(167,139,250,.25); animation: laufen 2s ease-in-out infinite; }
+.pg-knoten.fehler { border-color: var(--rot); }
+.pg-kopf { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--gedimmt); }
+.pg-symbol { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; font-size: 12px; font-weight: 700; color: #fff; }
+.farbe-gruen .pg-symbol, .palette-eintrag.typ-start .pg-symbol, .palette-eintrag.typ-ende .pg-symbol { background: var(--gruen); color: #0b2a1c; }
+.farbe-blau .pg-symbol, .palette-eintrag.typ-aktivitaet .pg-symbol { background: var(--akzent); }
+.farbe-lila .pg-symbol, .palette-eintrag.typ-signal .pg-symbol { background: var(--lila); color: #1d1240; }
+.farbe-gelb .pg-symbol, .palette-eintrag.typ-bedingung .pg-symbol { background: var(--gelb); color: #3a2a05; }
+.farbe-tuerkis .pg-symbol, .palette-eintrag.typ-agent .pg-symbol { background: var(--tuerkis); color: #053131; }
+.farbe-grau .pg-symbol, .palette-eintrag.typ-notiz .pg-symbol { background: #4a5878; }
+.pg-zustand { margin-left: auto; font-weight: 600; }
+.fertig .pg-zustand { color: var(--gruen); } .aktiv .pg-zustand { color: var(--gelb); }
+.wartet .pg-zustand { color: var(--lila); } .fehler .pg-zustand { color: var(--rot); }
+.pg-titel { font-weight: 600; font-size: 13.5px; margin-top: 5px; color: var(--text); }
+.pg-detail { color: var(--gedimmt); margin-top: 3px; line-height: 1.45; word-break: break-word; }
+.pg-detail code { font-size: .85em; }
+.pg-dienst { color: var(--lila); }
+.pg-entscheidung { margin-top: 6px; padding: 5px 8px; background: rgba(242,181,68,.1); border-radius: 6px;
+  color: var(--gelb); font-size: 11.5px; font-family: ui-monospace, Consolas, monospace; }
+.pg-port { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: var(--karte);
+  border: 2px solid var(--pg-kante); z-index: 3; }
+.pg-port.ein { top: -7px; left: calc(50% - 6px); }
+.pg-port.aus { bottom: -7px; left: calc(50% - 6px); cursor: crosshair; }
+.pg-port.aus:hover { border-color: var(--akzent); background: var(--akzent); }
+.pg-port.aus.ja, .pg-port.aus.nein { width: auto; height: auto; border-radius: 999px; font-size: 10px;
+  padding: 1px 7px; bottom: -11px; font-weight: 700; }
+.pg-port.aus.ja { left: calc(28% - 14px); color: var(--gruen); border-color: var(--gruen); }
+.pg-port.aus.nein { left: calc(72% - 18px); color: var(--rot); border-color: var(--rot); }
+.pg-kante-linie { fill: none; stroke: var(--pg-kante); stroke-width: 2; }
+.pg-kante-treffer { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+.pg-kante.gelaufen .pg-kante-linie { stroke: var(--gruen); stroke-width: 2.5; }
+.pg-kante.gewaehlt .pg-kante-linie { stroke: var(--akzent); stroke-width: 3; }
+.pg-kante-label { font-size: 10px; font-weight: 700; fill: var(--gedimmt); }
+.pg-kante-label.ja { fill: var(--gruen); } .pg-kante-label.nein { fill: var(--rot); }
+.pg-temp { fill: none; stroke: var(--akzent); stroke-width: 2; stroke-dasharray: 6 4; }
+
+/* ---------- Designer-Seite ---------- */
+.werkzeugleiste {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 20px; border-bottom: 1px solid var(--rand); background: #121a2b;
+}
+.werkzeugleiste label.inline { flex-direction: row; align-items: center; gap: 8px; }
+.werkzeugleiste select, .werkzeugleiste input:not([type="checkbox"]) { padding: 7px 9px; font-size: 13px; }
+.werkzeugleiste #kommentar { width: 260px; }
+.werkzeugleiste .trenner { width: 1px; height: 26px; background: var(--rand); }
+.werkzeugleiste .meldung { margin-left: auto; }
+.designer { display: grid; grid-template-columns: 260px 1fr 320px; gap: 16px; padding: 16px 20px;
+  height: calc(100vh - 140px); min-height: 520px; }
+.designer .karte { overflow: auto; }
+.zeichenflaeche { padding: 0; display: flex; }
+#canvas { flex: 1; min-height: 100%; }
+.palette-eintrag {
+  display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left;
+  background: var(--karte2); color: var(--text); border: 1px solid var(--rand);
+  padding: 8px 10px; font-size: 12.5px; font-weight: 400; margin-top: 8px; border-radius: 9px;
+}
+.palette-eintrag:hover { border-color: var(--akzent); filter: none; }
+.palette-eintrag small { color: var(--gedimmt); font-size: 11px; line-height: 1.4; display: block; margin-top: 2px; }
+.palette-eintrag .pg-symbol { flex: none; margin-top: 2px; }
+.eigenschaften label { margin-top: 10px; }
+.eigenschaften-kopf { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+.feldgruppe { margin-top: 10px; padding: 10px; background: var(--karte2); border-radius: 9px; }
+.feldgruppe > span { display: block; font-size: 12px; color: var(--gedimmt); margin-bottom: 4px; }
+.klein-label { margin-top: 6px; font-size: 12px; }
+.info-zeile { font-size: 12px; color: var(--gedimmt); margin-top: 8px; line-height: 1.5; }
+.pruef { margin-top: 8px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; }
+.pruef.ok { background: rgba(53,201,138,.12); color: var(--gruen); }
+.pruef.fehler { background: rgba(239,95,107,.12); color: var(--rot); }
+.pruef.warnung { background: rgba(242,181,68,.12); color: var(--gelb); }
+.json-box { background: #0b0f18; border-radius: 8px; padding: 12px; font-size: 12px; overflow: auto;
+  color: #9fc4ef; max-height: 60vh; }
+kbd { background: #0b0f18; border: 1px solid var(--rand); border-radius: 4px; padding: 0 5px; font-size: .9em; }
+label.haken { flex-direction: row; align-items: center; gap: 6px; }
+
+/* Live-Graph im Falldialog */
+.fall-graph { height: 420px; border: 1px solid var(--rand); }
+.fall-prozess-kopf { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; font-size: 13px; color: var(--gedimmt); }

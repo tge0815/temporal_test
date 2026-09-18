@@ -13,6 +13,7 @@ from temporalio.worker import Worker
 from common import config, db
 from common.format import euro
 from common.temporal_util import verbinde
+from orchestrator.prozess_workflow import ProzessWorkflow
 from orchestrator.workflow import UnfallSachbearbeitungWorkflow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -93,6 +94,26 @@ async def erinnerung_versenden(fall_id: str, vorgang: str, empfaenger: str,
     log.info("Fall %s: %s. Erinnerung zu '%s' versendet", fall_id, nummer, vorgang)
 
 
+@activity.defn(name="schritt_melden")
+async def schritt_melden(fall_id: str, status: str | None, schritt: str,
+                         komponente: str, zustand: str, text: str,
+                         details: dict | None = None) -> None:
+    """Generischer Verlaufseintrag fuer den Prozess-Interpreter.
+
+    Setzt optional den Fallstatus (damit das Dashboard weiss, worauf der Fall
+    gerade wartet) und schreibt eine Zeile in den Verlauf.
+    """
+    if status:
+        await db.fall_aktualisieren(fall_id, status=status)
+    await db.verlauf_schreiben(
+        fall_id, schritt, komponente, zustand, text,
+        {**(details or {}),
+         "temporal_workflow": activity.info().workflow_id,
+         "temporal_activity": activity.info().activity_type},
+    )
+    log.info("Fall %s: %s [%s] %s", fall_id, schritt, zustand, text)
+
+
 @activity.defn(name="fall_abschliessen")
 async def fall_abschliessen(fall_id: str) -> None:
     await db.fall_aktualisieren(fall_id, status="ABGESCHLOSSEN")
@@ -113,10 +134,12 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=config.QUEUE_ORCHESTRATOR,
-        workflows=[UnfallSachbearbeitungWorkflow],
+        # "Prozess" ist der Graph-Interpreter (Designer); "UnfallSachbearbeitung"
+        # bleibt registriert, damit Faelle aus der Zeit davor weiterlaufen.
+        workflows=[ProzessWorkflow, UnfallSachbearbeitungWorkflow],
         activities=[status_setzen, gutachten_beauftragen,
                     entgeltmeldung_anfordern, erinnerung_versenden,
-                    fall_abschliessen],
+                    schritt_melden, fall_abschliessen],
     )
     log.info("Orchestrator-Worker laeuft auf Queue '%s'", config.QUEUE_ORCHESTRATOR)
     await worker.run()
