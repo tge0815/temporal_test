@@ -9,3 +9,4 @@ geheim.env
 # Eigene Einstellungen – bleiben bei git pull unangetastet
 .env
 .pytest_cache/
+.env.sicherung

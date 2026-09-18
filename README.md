@@ -59,6 +59,17 @@ Im Ordner dieses Projekts ein Terminal öffnen und eingeben:
 docker compose up
 ```
 
+### Später aktualisieren
+
+```bash
+./update.sh                  # neuesten Stand holen, Container neu bauen und starten
+./update.sh <branch>         # dasselbe, aber auf einen anderen Branch wechseln
+```
+
+Das Skript sichert vorher Ihre `.env`, holt den neuen Stand, stellt die `.env`
+wieder her und baut das Anwendungs-Image neu. Danach zeigt es die Adressen von
+Dashboard und Designer an. Logs: `docker compose logs -f`.
+
 Beim allerersten Mal dauert das ein paar Minuten (Docker lädt Kafka, Temporal,
 PostgreSQL herunter). Danach startet es in wenigen Sekunden.
 
@@ -527,15 +538,14 @@ Die zwei fachlich interessantesten Dateien sind mit ► markiert.
   abgelehnt**: Der Fall ist über diesen Schritt schon hinaus. Ein Gutachten
   lässt sich nur einreichen, solange der Fall auch darauf wartet.
 * **`git pull` meldet „Ihre lokalen Änderungen … würden überschrieben"**:
-  Das betraf frühere Versionen, in denen `.env` noch mitversioniert war. Einmalig:
+  Das betrifft alte Stände, in denen `.env` noch mitversioniert war. Einmalig
+  das Update-Skript aus dem Git holen und ab dann immer damit aktualisieren:
   ```bash
-  cp .env .env.sicherung     # Ihre Werte sichern
-  git checkout -- .env       # Datei auf den Stand aus dem Git zurücksetzen
-  git pull
-  cp .env.beispiel .env      # falls .env dabei verschwunden ist
-  nano .env                  # HOST_IP wieder eintragen
+  git fetch origin
+  git show origin/main:update.sh > update.sh && chmod +x update.sh
+  ./update.sh
   ```
-  Ab dieser Version passiert das nicht mehr – `.env` steht in der `.gitignore`.
+  Das Skript sichert Ihre `.env` und stellt sie danach wieder her.
 * **`Unable to create dynamic config client`** und der Temporal-Container
   startet immer wieder neu: Die Datei `config/dynamicconfig/development-sql.yaml`
   fehlt oder wird nicht hineingemountet. Sie gehört zum Projekt und muss
