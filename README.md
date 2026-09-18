@@ -542,7 +542,7 @@ Die zwei fachlich interessantesten Dateien sind mit ► markiert.
   das Update-Skript aus dem Git holen und ab dann immer damit aktualisieren:
   ```bash
   git fetch origin
-  git show origin/main:update.sh > update.sh && chmod +x update.sh
+  git checkout -B main origin/main
   ./update.sh
   ```
   Das Skript sichert Ihre `.env` und stellt sie danach wieder her.

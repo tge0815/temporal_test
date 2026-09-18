@@ -27,6 +27,13 @@ if git ls-files --error-unmatch .env >/dev/null 2>&1; then
     git checkout -- .env
 fi
 
+# Bootstrap-Fall: dieses Skript wurde per "git show" kopiert und ist noch
+# nicht versioniert. Dann steht es dem Checkout im Weg - aus dem Weg raeumen,
+# die versionierte Fassung kommt gleich mit dem Branch.
+if ! git ls-files --error-unmatch update.sh >/dev/null 2>&1; then
+    rm -f update.sh
+fi
+
 if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git checkout -q "$BRANCH"
 else
